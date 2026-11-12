@@ -8,13 +8,17 @@ COPY templates ./templates
 
 RUN pip install --no-cache-dir .
 
-# Content and private trees are mounted; the index lives in /data.
-ENV MAKEROS_CONTENT_DIR=/data/content \
-    MAKEROS_PRIVATE_DIR=/data/private \
+# Persistent state lives in the data container's volumes:
+#   /data     SQLite DB + backups
+#   /private  per-user private notes
+# Content (Markdown + uploads) is bind-mounted from the host folder.
+ENV MAKEROS_CONTENT_DIR=/app/content \
+    MAKEROS_PRIVATE_DIR=/private \
+    MAKEROS_TEMPLATES_DIR=/app/templates \
     MAKEROS_DB_PATH=/data/makeros.db
 
-EXPOSE 8000
+EXPOSE 1313
 
-# --proxy-headers: behind the Caddy container the app should see the
-# real client address / scheme from X-Forwarded-* headers.
-CMD ["uvicorn", "makeros.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# --proxy-headers: behind `tailscale serve` the app should see the real
+# client address / scheme from X-Forwarded-* headers.
+CMD ["uvicorn", "makeros.main:app", "--host", "0.0.0.0", "--port", "1313", "--proxy-headers"]

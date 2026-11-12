@@ -1,35 +1,37 @@
 services:
+  # Persistent state only: SQLite DB + backups (/data) and per-user
+  # private notes (/private). Updating or rebuilding the app container
+  # never touches these volumes, so no data is lost on updates.
+  data:
+    image: alpine:3
+    command: ["true"]
+    volumes:
+      - makeros-data:/data
+      - makeros-private:/private
+
   app:
     build: .
     restart: unless-stopped
-    environment:
-      # Set this in .env (see .env.example) — required in production.
-      MAKEROS_SECRET_KEY: ${MAKEROS_SECRET_KEY:?set MAKEROS_SECRET_KEY in .env}
-      # External address and cookie mode for the lab deployment
-      # (HTTP over IP: leave both empty; HTTPS via tailscale serve: set both).
-      MAKEROS_BASE_URL: ${MAKEROS_BASE_URL:-}
-      MAKEROS_COOKIE_SECURE: ${MAKEROS_COOKIE_SECURE:-0}
-    volumes:
-      - makeros-data:/data
-      - ./content:/data/content
-      - ./private:/data/private
-      - ./templates:/app/templates
-    expose:
-      - "8000"
-
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
     depends_on:
-      - app
+      - data
+    volumes_from:
+      - data
+    volumes:
+      # Markdown content + uploads: bind-mounted from the host so git
+      # keeps working on it and it survives container rebuilds.
+      - ./content:/app/content
+      - ./templates:/app/templates
+    environment:
+      # Set in .env (see .env.example) — required in production.
+      MAKEROS_SECRET_KEY: ${MAKEROS_SECRET_KEY:?set MAKEROS_SECRET_KEY in .env}
+      # Tailscale URL of this machine, e.g. https://fedora.tail120260.ts.net
+      MAKEROS_BASE_URL: ${MAKEROS_BASE_URL:-}
+      # HTTPS via tailscale serve -> Secure cookies on.
+      MAKEROS_COOKIE_SECURE: ${MAKEROS_COOKIE_SECURE:-1}
+    ports:
+      # LAN (http://<server-ip>:1313) and tailscale serve both reach this.
+      - "1313:1313"
 
 volumes:
   makeros-data:
-  caddy-data:
-  caddy-config:
+  makeros-private:
