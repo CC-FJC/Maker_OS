@@ -134,6 +134,6 @@ def gcal_status(conn, settings) -> dict:
         "gcal_configured": gcal.is_configured(conn, settings),
         "gcal_client_id": client_id,
         "gcal_connected": gcal.is_connected(conn),
-        "gcal_calendar_id": gcal.chosen_calendar(conn),
+        "gcal_calendar_id": gcal.chosen_calendar(conn, settings),
         "gcal_error": get_ui(conn, gcal.ERROR_KEY),
     }

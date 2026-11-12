@@ -73,7 +73,8 @@ _NAV_KEY = "nav:"
 
 def nav_ids(conn: sqlite3.Connection, user) -> list[str]:
     """Saved per-user sidebar order (default order for missing entries)."""
-    default = ["inicio", *[s for s in COLLECTIONS if s not in ("people", "exhibits", "avisos")],
+    hidden = ("people", "exhibits", "avisos", "inventory")
+    default = ["inicio", *[s for s in COLLECTIONS if s not in hidden],
                "explorador", "notas", "asistente"]
     if user is None:
         return default

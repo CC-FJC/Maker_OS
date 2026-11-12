@@ -4,7 +4,10 @@ services:
   # never touches these volumes, so no data is lost on updates.
   data:
     image: alpine:3
-    command: ["true"]
+    # Long-running no-op: the container stays up so its volumes are
+    # clearly "attached"; the data itself lives in the named volumes.
+    command: ["tail", "-f", "/dev/null"]
+    restart: unless-stopped
     volumes:
       - makeros-data:/data
       - makeros-private:/private

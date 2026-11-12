@@ -40,6 +40,7 @@ class Settings:
     google_client_id: str = ""      # Google OAuth (Calendar sync); empty = feature off
     google_client_secret: str = ""
     google_redirect_uri: str = ""   # default: {base_url}/google/callback
+    google_calendar_id: str = ""    # default calendar for sync (overridden by admin panel)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -55,4 +56,5 @@ class Settings:
             google_client_id=os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
             google_client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(),
             google_redirect_uri=os.environ.get("GOOGLE_REDIRECT_URI", "").strip(),
+            google_calendar_id=os.environ.get("GOOGLE_CALENDAR_ID", "").strip(),
         )

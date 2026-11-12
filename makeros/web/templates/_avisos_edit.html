@@ -1,0 +1,11 @@
+<form class="avisos-edit-form"
+      hx-post="/avisos/tablero/editar" hx-target="#avisos-board" hx-swap="outerHTML">
+  <textarea name="contenido" id="avisos-textarea" rows="7"
+            data-original="{{ body }}"
+            oninput="makerosAvisosDirty(this)"
+            aria-label="Contenido del tablero de avisos">{{ body }}</textarea>
+  <div class="modal-actions">
+    <button type="button" class="btn-ghost" onclick="makerosAvisosCancel()">Cancelar</button>
+    <button type="submit" class="btn-primary" id="avisos-save" disabled>Guardar</button>
+  </div>
+</form>

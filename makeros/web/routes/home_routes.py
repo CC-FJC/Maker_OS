@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from ... import frontmatter
@@ -15,9 +15,10 @@ from .. import event_store
 from ..calendar import WEEKDAYS_ES
 from ..deps import ConnDep, UserDep, base_ctx, get_settings
 from ..greetings import greeting_for
-from ..listing import collection_items, project_task_stats, unassigned_tasks
+from ..listing import collection_items, project_task_stats
 from ..render import render_markdown
 from ..templates import templates
+from .collection_routes import EDIT_ROLES, _group_by_project
 from .explorer_routes import pinned_pages
 
 router = APIRouter()
@@ -82,6 +83,43 @@ async def avisos_board_content(request: Request, conn: ConnDep, user: UserDep):
     )
 
 
+def _avisos_can_edit(user) -> bool:
+    return user is not None and user["role"] in EDIT_ROLES
+
+
+@router.get("/avisos/tablero/editar")
+async def avisos_board_edit(request: Request, conn: ConnDep, user: UserDep):
+    """Inline edit form for the board (swapped into #avisos-board)."""
+    if not _avisos_can_edit(user):
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    return templates.TemplateResponse(
+        request,
+        "_avisos_edit.html",
+        {"user": user, "body": ensure_tablero(settings, conn)},
+    )
+
+
+@router.post("/avisos/tablero/editar")
+async def avisos_board_save(
+    request: Request, conn: ConnDep, user: UserDep,
+    contenido: str = Form(""),
+):
+    """Save the board and return the polled board div (restores live sync)."""
+    if not _avisos_can_edit(user):
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file = settings.content_dir / "avisos" / "tablero.md"
+    meta, _body = frontmatter.read(file)
+    frontmatter.write(file, meta, contenido.strip() or TABLERO_SEED)
+    index_file(conn, settings.content_dir, file)
+    return templates.TemplateResponse(
+        request,
+        "_avisos_board_wrap.html",
+        {"user": user, "avisos_html": render_markdown(ensure_tablero(settings, conn))},
+    )
+
+
 @router.get("/")
 async def home(request: Request, conn: ConnDep, user: UserDep, estado: str = "todos"):
     if user is None:
@@ -103,7 +141,7 @@ async def home(request: Request, conn: ConnDep, user: UserDep, estado: str = "to
             project_statuses=PROJECT_STATUSES,
             projects=projects[:MAX_HOME_PROJECTS],
             total_projects=len(projects),
-            task_groups=unassigned_tasks(conn),
+            task_groups=_group_by_project(conn, collection_items(conn, "tasks")),
             recent=recent_documents(conn, 10),
             greeting=greeting_for(user["display_name"] or user["username"]),
             avisos_html=render_markdown(ensure_tablero(settings, conn)),

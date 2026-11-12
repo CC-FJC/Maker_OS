@@ -281,16 +281,23 @@ async def collection_index(collection: str, request: Request, conn: ConnDep, use
         # (incremental via Google's sync tokens, so usually cheap).
         schedule_sync(get_settings(request))
         return _calendar_response(request, conn, user, info)
-    # Per-user list/grid choice: a valid ?vista= param wins and is
-    # remembered in a cookie; otherwise the cookie (or "tarjetas") applies.
+    # Per-user view choice: a valid ?vista= param wins and is saved to the
+    # user's preferences (ui_settings); otherwise the saved preference,
+    # then the cookie, then the default. Cards are the default everywhere.
     vista = request.query_params.get("vista", "")
+    remember = None
     if vista in VIEWS:
         remember = vista
+        if user is not None:
+            set_ui(conn, f"vista:{collection}:{user['username']}", vista)
     else:
-        vista = remember = None
-    if vista is None:
-        default = "kanban" if collection == "tasks" else "tarjetas"
-        vista = request.cookies.get("vista", default)
+        vista = ""
+        if user is not None:
+            vista = get_ui(conn, f"vista:{collection}:{user['username']}", "")
+        if vista not in VIEWS:
+            vista = request.cookies.get("vista", "")
+        if vista not in VIEWS:
+            vista = "tarjetas"
     # Kanban only exists for tasks; everywhere else it falls back to tarjetas.
     if vista == "kanban" and collection != "tasks":
         vista = "tarjetas"

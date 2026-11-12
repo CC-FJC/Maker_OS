@@ -12,6 +12,7 @@ All network calls go through the small module-level `oauth_post` /
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -133,8 +134,15 @@ def is_connected(conn: sqlite3.Connection) -> bool:
     return bool(get_ui(conn, KEY_REFRESH))
 
 
-def chosen_calendar(conn: sqlite3.Connection) -> str:
-    return get_ui(conn, KEY_CALENDAR)
+def chosen_calendar(conn: sqlite3.Connection, settings=None) -> str:
+    """Calendar id: admin-panel choice wins; otherwise the GOOGLE_CALENDAR_ID
+    env var (set once in .env) so a fresh deploy never asks again."""
+    saved = get_ui(conn, KEY_CALENDAR)
+    if saved:
+        return saved
+    if settings is not None:
+        return settings.google_calendar_id
+    return os.environ.get("GOOGLE_CALENDAR_ID", "").strip()
 
 
 
@@ -190,7 +198,7 @@ def sync(conn: sqlite3.Connection, settings) -> SyncResult:
 
     result = SyncResult()
     refresh = get_ui(conn, KEY_REFRESH)
-    calendar_id = chosen_calendar(conn)
+    calendar_id = chosen_calendar(conn, settings)
     client_id, client_secret = client_credentials(conn, settings)
     if not refresh or not calendar_id or not (client_id and client_secret):
         return result

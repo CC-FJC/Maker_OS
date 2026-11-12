@@ -22,14 +22,18 @@
   <div class="home-section-head">
     <h2>Avisos</h2>
     {% if user and user["role"] != "viewer" %}
-    <a class="btn-ghost" href="/avisos/tablero">Editar tablero</a>
+    <button type="button" class="btn-ghost" onclick="makerosAvisosEdit()"
+            title="Editar el tablero aquí mismo">{{ icon("edit-2") }} Editar</button>
     {% endif %}
   </div>
-  <div class="avisos-board"
-       hx-get="/avisos/tablero/contenido" hx-trigger="every 15s"
-       hx-target="this" hx-swap="innerHTML"
+  <div class="avisos-board-wrap{% if user and user['role'] != 'viewer' %} avisos-editable{% endif %}"
+       {% if user and user["role"] != "viewer" %}onclick="makerosAvisosEdit()"{% endif %}
        title="Se actualiza solo cada pocos segundos">
-    {{ avisos_html | safe }}
+    <div id="avisos-board" class="avisos-board"
+         hx-get="/avisos/tablero/contenido" hx-trigger="every 15s"
+         hx-target="this" hx-swap="innerHTML">
+      {{ avisos_html | safe }}
+    </div>
   </div>
 </section>
 
@@ -102,21 +106,70 @@
 </section>
 
 <section class="home-section">
-  <h2>Tareas sin proyecto</h2>
-  <div class="task-groups">
+  <div class="home-section-head">
+    <h2>Tareas</h2>
+    <a class="home-more" href="/tasks">Ver todas</a>
+  </div>
+  {% for group in task_groups %}
+  <h3 class="project-group-title">
+    {% if group["slug"] %}
+    <a href="/projects/{{ group["slug"] }}/project">{{ group["title"] }}</a>
+    {% else %}
+    <span class="muted-title">{{ group["title"] }}</span>
+    {% endif %}
+    <span class="count-pill">{{ group["items"] | length }}</span>
+  </h3>
+  <div class="kanban" data-group="home-{{ group['slug'] or 'sin-proyecto' }}">
     {% for status, label in task_status_labels.items() %}
-    <div class="task-group task-group-{{ status }}">
-      <h3>{{ label }} <span class="count-pill">{{ task_groups.get(status, []) | length }}</span></h3>
-      <ul class="task-mini-list">
-        {% for task in task_groups.get(status, []) %}
-        <li><a href="/{{ task["path"] }}">{{ task["title"] or task["path"] }}</a></li>
-        {% else %}
-        <li class="item-empty">Ninguna.</li>
+    <div class="kanban-col" data-status="{{ status }}">
+      <h3>{{ label }}
+        <span class="count-pill">
+          {{ group["items"] | selectattr("status", "equalto", status) | list | length }}
+        </span>
+      </h3>
+      <div class="kanban-cards" data-status="{{ status }}">
+        {% for item in group["items"] if item["status"] == status %}
+        <div class="kanban-card" data-path="{{ item["path"] }}"
+             onclick="if (makerosKanbanDragBlocked && makerosKanbanDragBlocked()) return;
+                      makerosOpenModal('/tasks/{{ item["path"][6:] }}/editar?fragmento=1')">
+          <div class="kanban-card-top">
+            <a class="kanban-title" href="/{{ item["path"] }}"
+               onclick="event.stopPropagation()">{{ item["title"] or item["path"] }}</a>
+            <button type="button" class="kanban-edit" title="Editar tarea"
+                    aria-label="Editar {{ item["title"] or item["path"] }}"
+                    onclick="event.stopPropagation(); makerosOpenModal('/tasks/{{ item['path'][6:] }}/editar?fragmento=1')">
+              {{ icon("edit-2") }}
+            </button>
+          </div>
+          <div class="kanban-tags">
+            {% if item["project"] %}
+            <a class="kanban-chip" href="/projects/{{ item['project'] }}/project"
+               onclick="event.stopPropagation()">{{ item["project"] }}</a>
+            {% endif %}
+            {% if item["priority"] %}
+            <span class="kanban-chip kanban-prio kanban-prio-{{ item['priority'] }}">
+              {{ priority_labels.get(item["priority"], item["priority"]) }}</span>
+            {% endif %}
+          </div>
+          {% if item["extract"] %}
+          <p class="kanban-extract">{{ item["extract"] }}</p>
+          {% endif %}
+          <div class="kanban-meta">
+            {% if item["dates"] %}
+            <span class="kanban-due{% if item['vencido'] %} vencido{% endif %}">
+              {{ icon("calendar") }}{{ item["dates"] }}</span>
+            {% endif %}
+            {% if item["assignee"] %}<span>{{ icon("user") }}{{ item["assignee"] }}</span>{% endif %}
+          </div>
+        </div>
         {% endfor %}
-      </ul>
+      </div>
     </div>
     {% endfor %}
   </div>
+  {% else %}
+  <p class="item-empty">Todavía no hay tareas. Crea la primera con «Nueva tarea».</p>
+  {% endfor %}
 </section>
 
 </main>

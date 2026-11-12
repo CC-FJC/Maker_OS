@@ -631,9 +631,9 @@ def test_home_dashboard_sections(logged_in_client: TestClient, settings):
     assert response.status_code == 200
     assert "Makerspace" in response.text
     assert "Jacob" in response.text  # greeting includes the user's name
-    assert "Tareas sin proyecto" in response.text
-    assert "Hackaton VR" in response.text            # unassigned task
-    assert '<span class="count-pill">1</span>' in response.text  # one pending
+    assert ">Tareas</h2>" in response.text
+    assert "Hackaton VR" in response.text            # task shows in home kanban
+    assert 'class="kanban"' in response.text         # home shows tasks as kanban
     assert "Cambios recientes" in response.text
     # Sidebar sections from the Notion template.
     assert "Enlaces rápidos" in response.text
@@ -2041,11 +2041,15 @@ def test_greeting_rotates_by_date():
     assert len(GREETINGS) == 30
 
 
-def test_kanban_is_default_for_tasks(logged_in_client: TestClient, settings):
+def test_cards_are_default_for_tasks_and_kanban_saved(logged_in_client: TestClient, settings):
     _seed_tasks(settings)
     response = logged_in_client.get("/tasks")
+    assert 'class="card-grid"' in response.text     # cards are the default view
+    assert 'vista=kanban' in response.text           # kanban still one click away
+    # Choosing kanban persists as the user's preference.
+    logged_in_client.get("/tasks?vista=kanban")
+    response = logged_in_client.get("/tasks")
     assert 'class="kanban"' in response.text
-    # Cards carry the quick-edit modal trigger.
     assert "kanban-edit" in response.text
     assert "/editar?fragmento=1" in response.text
 
@@ -2212,7 +2216,7 @@ def test_home_has_avisos_board_and_week(logged_in_client: TestClient, settings):
     assert "Avisos" in response.text
     assert "Esta semana" in response.text
     assert (settings.content_dir / "avisos" / "tablero.md").is_file()
-    assert 'href="/avisos/tablero"' in response.text
+    assert 'onclick="makerosAvisosEdit()"' in response.text  # inline edit on home
 
 
 def test_pin_page_shows_on_home(logged_in_client: TestClient, settings):
@@ -2251,7 +2255,7 @@ def test_sidebar_has_notes_explorer_avisos(logged_in_client: TestClient):
     response = logged_in_client.get("/")
     assert 'href="/notas"' in response.text
     assert 'href="/explorador"' in response.text
-    assert "Editar tablero" in response.text  # avisos lives on home now
+    assert "makerosAvisosEdit()" in response.text  # avisos editable inline on home
 
 
 def test_blocks_are_click_to_edit(logged_in_client: TestClient):

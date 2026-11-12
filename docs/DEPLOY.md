@@ -84,13 +84,27 @@ docker volume rm makeros-data makeros-private            # ONLY if you really wa
 
 ## 7. Google Calendar sync
 
-Works because the Tailscale URL is real HTTPS:
+Works because the Tailscale URL is real HTTPS. Configure once in `.env`
+(it lives on the host — `docker compose up -d --build` never touches it):
 
-1. Admin panel → Integraciones → paste Client ID / secret (see
-   `docs/GCALENDAR.md`).
-2. In Google Cloud Console, register exactly this redirect URI:
-   `https://<machine>.<tailnet>.ts.net/google/callback`
-3. Click "Conectar" and authorize.
+```
+MAKEROS_BASE_URL=https://<machine>.<tailnet>.ts.net
+GOOGLE_REDIRECT_URI=https://<machine>.<tailnet>.ts.net/google/callback
+GOOGLE_CALENDAR_ID=<calendar id, e.g. c_xxx@group.calendar.google.com>
+```
+
+Then:
+
+1. In Google Cloud Console, register exactly that redirect URI in the
+   OAuth client ("URIs de redirección autorizados").
+2. Admin panel → Integraciones → paste Client ID / secret (stored in
+   the DB volume, they also survive updates) → "Conectar con Google" →
+   authorize.
+3. The calendar ID from `GOOGLE_CALENDAR_ID` is used automatically;
+   anything set in the admin panel wins over it.
+
+Always open the platform via the Tailscale URL when doing the OAuth
+login — entering via `http://<ip>:1313` makes Google reject the redirect.
 
 ## 8. Backups
 

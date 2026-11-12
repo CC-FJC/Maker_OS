@@ -888,3 +888,27 @@ window.makerosConfirmSubmit = function (btn, e) {
     }
   }, 3500);
 };
+
+// ---- Avisos board: inline edit on the home page ----
+window.makerosAvisosEdit = function () {
+  var board = document.getElementById("avisos-board");
+  if (!board || typeof htmx === "undefined") { return; }
+  if (board.querySelector(".avisos-edit-form")) { return; }  // already editing
+  board.removeAttribute("hx-get"); board.removeAttribute("hx-trigger");
+  board.removeAttribute("hx-target"); board.removeAttribute("hx-swap");
+  htmx.ajax("GET", "/avisos/tablero/editar", { target: "#avisos-board", swap: "innerHTML" });
+};
+window.makerosAvisosDirty = function (ta) {
+  var btn = document.getElementById("avisos-save");
+  if (btn) { btn.disabled = ta.value === ta.dataset.original; }
+};
+window.makerosAvisosCancel = function () {
+  var board = document.getElementById("avisos-board");
+  if (!board || typeof htmx === "undefined") { return; }
+  htmx.ajax("GET", "/avisos/tablero/contenido", { target: board, swap: "innerHTML" });
+  board.setAttribute("hx-get", "/avisos/tablero/contenido");
+  board.setAttribute("hx-trigger", "every 15s");
+  board.setAttribute("hx-target", "this");
+  board.setAttribute("hx-swap", "innerHTML");
+  htmx.process(board);
+};

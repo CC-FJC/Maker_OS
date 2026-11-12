@@ -65,14 +65,24 @@ def _folder(settings: Settings, user, path: str) -> Path:
 
 
 def _note_meta(file: Path) -> dict:
-    meta, _body = frontmatter.read(file)
+    meta, body = frontmatter.read(file)
     tags = meta.get("tags", [])
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
+    total = len(re.findall(r"^\s*- \[[ xX]\]", body, re.M))
+    done = len(re.findall(r"^\s*- \[[xX]\]", body, re.M))
+    extract = ""
+    for line in body.splitlines():
+        line = line.strip().lstrip("#").strip()
+        if line and not line.startswith(("-", "|", ">")):
+            extract = line[:140]
+            break
     return {
         "path": file.with_suffix("").name,
         "title": meta.get("title") or file.stem.replace("-", " "),
         "tags": tags,
+        "checklist": {"done": done, "total": total} if total else None,
+        "extract": extract,
         "updated": datetime.fromtimestamp(file.stat().st_mtime)
         .strftime("%Y-%m-%d %H:%M"),
     }

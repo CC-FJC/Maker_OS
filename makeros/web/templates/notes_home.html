@@ -47,13 +47,37 @@
 </div>
 {% endif %}
 
-<div class="card-grid notes-grid">
+<div class="card-grid notes-grid" id="notas-grid">
+  <form class="item-card note-card note-composer" method="post"
+        hx-post="/notas/nuevo{% if folder_path %}?carpeta={{ folder_path }}{% endif %}"
+        hx-target="#notas-grid" hx-swap="outerHTML">
+    <input type="hidden" name="carpeta" value="{{ folder_path }}">
+    <input class="note-composer-title" type="text" name="title" placeholder="Título de la nota"
+           aria-label="Título de la nota" required>
+    <textarea class="note-composer-body" name="cuerpo" rows="4"
+              placeholder="Escribe aquí…  ·  usa «- [ ]» para una checklist  ·  [[pagina]] o [texto](url) para enlaces"
+              aria-label="Contenido de la nota"></textarea>
+    <input class="note-composer-tags" type="text" name="tags" placeholder="etiquetas, separadas, por coma"
+           aria-label="Etiquetas">
+    <div class="note-composer-actions">
+      <button type="submit" class="btn-primary">Guardar nota</button>
+    </div>
+  </form>
   {% for note in scan["notes"] %}
   <a class="item-card note-card tagged-card" href="/notas/{{ note["path"] }}" data-tags="{{ note["tags"] | join(',') }}">
     <div class="card-head">
       <span class="card-icon">{{ icon("file-text", cls="icon icon-lg") }}</span>
     </div>
     <span class="card-title">{{ note["title"] }}</span>
+    {% if note["extract"] %}<span class="card-extract">{{ note["extract"] }}</span>{% endif %}
+    {% if note["checklist"] %}
+    <span class="note-checklist">
+      {{ icon("check-square") }} {{ note["checklist"]["done"] }}/{{ note["checklist"]["total"] }}
+      <span class="note-checklist-bar">
+        <span style="width: {{ (100 * note["checklist"]["done"] / note["checklist"]["total"]) | round | int }}%"></span>
+      </span>
+    </span>
+    {% endif %}
     {% if note["tags"] %}
     <div class="chip-row">
       {% for tag in note["tags"] %}<span class="page-tag">{{ tag }}</span>{% endfor %}
@@ -62,7 +86,7 @@
     <span class="card-meta">actualizada {{ note["updated"] }}</span>
   </a>
   {% else %}
-  <p class="item-empty">Sin notas aquí todavía. Crea la primera.</p>
+  <p class="item-empty">Sin notas aquí todavía. Escribe la primera arriba.</p>
   {% endfor %}
 </div>
 

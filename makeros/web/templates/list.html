@@ -21,7 +21,7 @@
            href="/{{ collection_slug }}?vista=tarjetas{% if estado != 'todos' %}&estado={{ estado }}{% endif %}">Tarjetas</a>
       </nav>
       {% if collection_slug == "wiki" %}
-      <a class="btn-ghost" href="/wiki/grafos" title="Ver el grafo de conexiones">{{ icon("share-2") }} Grafo</a>
+      <a class="btn-ghost" href="/wiki/grafos" title="Ver el grafo de conexiones">{{ icon("git-branch") }} Grafo</a>
       {% endif %}
       {% if collection_slug == "wiki" and user and user["role"] != "viewer" %}
       <details class="icon-picker">
