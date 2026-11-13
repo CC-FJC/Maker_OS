@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from ... import frontmatter
 from ...config import Settings
-from ..blocks import BLOCK_SEEDS, infer_kind, join_blocks, split_blocks
+from ..blocks import BLOCK_SEEDS, infer_kind, join_blocks, split_blocks, toggle_checkbox
 from ..deps import ConnDep, UserDep, base_ctx, get_settings
 from ..render import render_markdown
 from ..templates import templates
@@ -26,7 +26,6 @@ from ..vault import valid_vault_path
 
 router = APIRouter()
 
-NOTE_SEED = "Escribe aquí tu nota."
 
 RESERVED = {"nuevo", "carpeta", "media", "bloques"}
 
@@ -203,7 +202,7 @@ async def notes_create(
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     if tag_list:
         meta["tags"] = tag_list
-    _save(settings, user, file, meta, [cuerpo.strip() or NOTE_SEED])
+    _save(settings, user, file, meta, [cuerpo.strip()])
 
     if request.headers.get("hx-request") == "true":
         return HTMLResponse(
@@ -305,6 +304,28 @@ async def notes_edit_form(
         "_block_form.html",
         {"user": user, "page_url": _note_page_url(path), "i": block_index,
          "text": blocks[block_index].text, "tipo": infer_kind(blocks[block_index].text)},
+    )
+
+
+@router.post("/notas/{path:path}/bloques/{block_index:int}/check/{line:int}")
+async def notes_toggle_check(
+    path: str, block_index: int, line: int, request: Request, conn: ConnDep, user: UserDep
+):
+    """Flip one checklist item of a private note; returns the block."""
+    if user is None:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file = _note_file(settings, user, path)
+    meta, body = frontmatter.read(file)
+    blocks = split_blocks(body)
+    if not 0 <= block_index < len(blocks):
+        raise HTTPException(status_code=404)
+    texts = [b.text for b in blocks]
+    texts[block_index] = toggle_checkbox(texts[block_index], line)
+    _save(settings, user, file, meta, texts)
+    updated = split_blocks(join_blocks(texts))
+    return _block_partial(
+        request, user, _note_page_url(path), block_index, updated[block_index].text
     )
 
 

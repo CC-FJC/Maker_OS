@@ -2157,7 +2157,8 @@ def test_private_notes_vault(logged_in_client: TestClient, settings):
     # Create a note with tags inside a folder, via the modal endpoint.
     created = logged_in_client.post(
         "/notas/nuevo",
-        data={"title": "Idea de sensor", "carpeta": "ideas", "tags": "pcb, sensor"},
+        data={"title": "Idea de sensor", "carpeta": "ideas", "tags": "pcb, sensor",
+              "cuerpo": "Probar el sensor en la protoboard."},
         headers={"HX-Request": "true"},
     )
     assert created.status_code == 200

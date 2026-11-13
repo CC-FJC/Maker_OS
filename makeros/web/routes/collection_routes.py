@@ -24,7 +24,7 @@ from ...frontmatter import FrontmatterError
 from ...indexer import index_file, remove_document
 from ...ui import get_ui, set_ui
 from .. import event_store, vault
-from ..blocks import BLOCK_SEEDS, infer_kind, join_blocks, split_blocks
+from ..blocks import BLOCK_SEEDS, infer_kind, join_blocks, split_blocks, toggle_checkbox
 from ..calendar import (
     WEEKDAYS_ES,
     build_ics,
@@ -749,6 +749,33 @@ async def save_block(
             request, user, f"/{collection}/{page_path}", block_index, updated[block_index].text
         )
     return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
+
+
+@router.post("/{collection}/{page_path:path}/bloques/{block_index:int}/check/{line:int}")
+async def toggle_block_check(
+    collection: str,
+    page_path: str,
+    block_index: int,
+    line: int,
+    request: Request,
+    conn: ConnDep,
+    user: UserDep,
+):
+    """Flip one `- [ ]` item of a checklist block; returns the block."""
+    if user is None or user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file, meta, body = _load_for_edit(settings, collection, page_path)
+    blocks = split_blocks(body)
+    if not _valid_index(blocks, block_index):
+        raise HTTPException(status_code=404)
+    texts = [b.text for b in blocks]
+    texts[block_index] = toggle_checkbox(texts[block_index], line)
+    _save_blocks(conn, settings, file, meta, texts)
+    updated = split_blocks(join_blocks(texts))
+    return _block_partial(
+        request, user, f"/{collection}/{page_path}", block_index, updated[block_index].text
+    )
 
 
 @router.post("/{collection}/{page_path:path}/bloques/{block_index:int}/borrar")

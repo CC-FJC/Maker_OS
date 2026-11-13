@@ -43,6 +43,7 @@
   </details>
   {% endif %}
   <div class="block-content" data-edit-url="{{ page_url }}/bloques/{{ b["i"] }}/editar"
+       data-kind="{{ b["kind"] }}"
        title="Clic para editar">{{ b["html"] | safe }}</div>
 </div>
 {% endfor %}

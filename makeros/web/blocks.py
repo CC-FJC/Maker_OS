@@ -112,3 +112,14 @@ def join_blocks(texts: list[str]) -> str:
     """Render block texts back to a Markdown body."""
     body = "\n\n".join(t.strip("\n") for t in texts if t.strip())
     return body + "\n" if body else ""
+
+
+def toggle_checkbox(text: str, line: int) -> str:
+    """Flip `- [ ]` <-> `- [x]` on one line of a checklist block."""
+    lines = text.split("\n")
+    if 0 <= line < len(lines):
+        m = re.match(r"^(\s*[-*+]\s*\[)([ xX])(\])", lines[line])
+        if m:
+            new = "x" if m.group(2) == " " else " "
+            lines[line] = lines[line][: m.start(2)] + new + lines[line][m.end(2):]
+    return "\n".join(lines)

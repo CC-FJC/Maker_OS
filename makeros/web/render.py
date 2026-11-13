@@ -72,6 +72,18 @@ def _wikilink_target(target: str) -> str:
     return target.replace(" ", "-")
 
 
+# Checklist items become real, clickable checkboxes (toggled via the
+# block endpoint; the checkbox carries the line index of the item).
+_TASK_ITEM = re.compile(r'<li>\[( |x|X)\]\s*')
+
+
+def _task_checkboxes(html: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        checked = " checked" if match.group(1) in ("x", "X") else ""
+        return f'<li class="task-item"><input type="checkbox" class="task-check"{checked}> '
+    return _TASK_ITEM.sub(repl, html)
+
+
 def render_markdown(body: str) -> str:
     """Markdown body -> HTML, expanding [[wikilinks]] to /wiki/... links."""
 
@@ -83,4 +95,4 @@ def render_markdown(body: str) -> str:
     stripped = body.strip()
     if stripped.startswith(">") and _CALLOUT_HEAD.match(stripped.split("\n", 1)[0]):
         return _render_callout(stripped)
-    return _size_images(_md.render(_WIKILINK.sub(repl, body)))
+    return _task_checkboxes(_size_images(_md.render(_WIKILINK.sub(repl, body))))

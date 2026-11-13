@@ -1812,3 +1812,41 @@ html[data-sidebar="collapsed"] .nav-reorder-toggle { opacity: 1; }
   flex: 1; height: 4px; border-radius: 999px; background: var(--ink-soft); overflow: hidden;
 }
 .note-checklist-bar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* ---------- Graphical table editor ---------- */
+.table-editor { display: flex; flex-direction: column; gap: 8px; }
+.table-editor-tools { display: flex; align-items: center; gap: 8px; }
+.table-editor-hint { font-size: 12px; color: var(--muted); }
+.table-editor-grid { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+.table-editor-grid th, .table-editor-grid td {
+  border: 1px solid var(--border); padding: 6px 8px; min-width: 80px;
+  background: var(--bg); color: var(--text);
+}
+.table-editor-grid th { background: var(--ink-soft); font-weight: 600; }
+.table-editor-grid th:focus, .table-editor-grid td:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: -2px;
+}
+.table-del-cell { border: none !important; background: none !important; min-width: 0 !important; padding: 0 2px !important; }
+.table-del-row, .table-del-col {
+  border: 0; background: none; color: var(--muted); cursor: pointer;
+  font-size: 14px; padding: 0 4px; border-radius: 4px;
+}
+.table-del-row:hover, .table-del-col:hover { color: var(--accent); }
+.btn-xs { padding: 3px 10px; font-size: 12.5px; }
+
+/* ---------- Graphical list / checklist / title editors ---------- */
+.list-editor, .title-editor { display: flex; flex-direction: column; gap: 8px; }
+.list-editor-rows { display: flex; flex-direction: column; gap: 4px; }
+.list-editor-row { display: flex; align-items: center; gap: 8px; }
+.list-editor-row .row-text {
+  flex: 1; min-height: 20px; padding: 3px 6px; border-radius: 4px; font-size: 14px;
+}
+.list-editor-row .row-text:focus { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); background: var(--bg); }
+.row-bullet { color: var(--muted); width: 14px; text-align: center; }
+.title-editor-text {
+  font-size: 20px; font-weight: 700; padding: 4px 6px; border-radius: 4px; color: var(--text-title);
+}
+.title-editor-text:focus { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); background: var(--bg); }
+.table-editor-tools .btn-xs.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.task-item { list-style: none; }
+.task-item .task-check { margin-right: 6px; accent-color: var(--accent); cursor: pointer; }

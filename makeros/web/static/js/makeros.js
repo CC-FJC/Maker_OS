@@ -912,3 +912,270 @@ window.makerosAvisosCancel = function () {
   board.setAttribute("hx-swap", "innerHTML");
   htmx.process(board);
 };
+
+// ---- Graphical table editor: markdown table <-> HTML table ----
+// The textarea keeps the markdown source of truth; the HTML table is
+// the UI. On submit the table is serialized back into the textarea.
+function makerosParseMdTable(text) {
+  return text.trim().split("\n")
+    .filter(function (l) { return l.trim().startsWith("|"); })
+    .map(function (l) {
+      return l.trim().replace(/^\||\|$/g, "").split("|").map(function (c) { return c.trim(); });
+    })
+    .filter(function (row, i) {
+      // skip the markdown separator row (| --- | --- |)
+      return !(i === 1 && row.every(function (c) { return /^:?-{3,}:?$/.test(c); }));
+    });
+}
+
+function makerosTableToMarkdown(tbl) {
+  var rows = Array.prototype.map.call(tbl.querySelectorAll("tr"), function (tr) {
+    return Array.prototype.map.call(tr.querySelectorAll("th, td:not(.table-del-cell)"), function (c) {
+      return c.textContent.replace(/\|/g, "\\|").trim() || " ";
+    });
+  }).filter(function (r) { return r.length; });
+  if (!rows.length) { return ""; }
+  var cols = Math.max.apply(null, rows.map(function (r) { return r.length; }));
+  rows.forEach(function (r) { while (r.length < cols) { r.push(" "); } });
+  var out = ["| " + rows[0].join(" | ") + " |",
+             "|" + rows[0].map(function () { return " --- "; }).join("|") + "|"];
+  rows.slice(1).forEach(function (r) { out.push("| " + r.join(" | ") + " |"); });
+  return out.join("\n");
+}
+
+function makerosInitTableEditor(form) {
+  var ta = form.querySelector("textarea[name=text]");
+  if (!ta || form._tableEditor || !ta.value.trim().startsWith("|")) { return; }
+  form._tableEditor = true;
+
+  var data = makerosParseMdTable(ta.value);
+  var wrap = document.createElement("div");
+  wrap.className = "table-editor";
+  var tools = document.createElement("div");
+  tools.className = "table-editor-tools";
+  tools.innerHTML =
+    '<button type="button" class="btn-ghost btn-xs" data-act="add-row">+ Fila</button>' +
+    '<button type="button" class="btn-ghost btn-xs" data-act="add-col">+ Columna</button>' +
+    '<span class="table-editor-hint">Haz clic en una celda para editarla</span>';
+  var tbl = document.createElement("table");
+  tbl.className = "table-editor-grid";
+  data.forEach(function (row, ri) {
+    var tr = document.createElement("tr");
+    row.forEach(function (cell, ci) {
+      var td = document.createElement(ri === 0 ? "th" : "td");
+      td.textContent = cell;
+      td.contentEditable = "true";
+      if (ri === 0 && ci === row.length - 1) {
+        var delCol = document.createElement("button");
+        delCol.type = "button"; delCol.className = "table-del-col"; delCol.textContent = "×";
+        delCol.title = "Quitar columna";
+        delCol.onclick = function () { makerosDelCol(tbl, ci); };
+        td.appendChild(delCol);
+      }
+      tr.appendChild(td);
+    });
+    if (ri > 0) {
+      var delTd = document.createElement("td");
+      delTd.className = "table-del-cell";
+      delTd.innerHTML = '<button type="button" class="table-del-row" title="Quitar fila">×</button>';
+      delTd.querySelector("button").onclick = function () { tr.remove(); };
+      tr.appendChild(delTd);
+    }
+    tbl.appendChild(tr);
+  });
+  tools.querySelector('[data-act="add-row"]').onclick = function () {
+    var cols = tbl.querySelector("tr").children.length;
+    var tr = document.createElement("tr");
+    for (var i = 0; i < cols - 1; i++) {
+      var td = document.createElement("td"); td.contentEditable = "true"; tr.appendChild(td);
+    }
+    var delTd = document.createElement("td");
+    delTd.className = "table-del-cell";
+    delTd.innerHTML = '<button type="button" class="table-del-row" title="Quitar fila">×</button>';
+    delTd.querySelector("button").onclick = function () { tr.remove(); };
+    tr.appendChild(delTd);
+    tbl.appendChild(tr);
+  };
+  tools.querySelector('[data-act="add-col"]').onclick = function () { makerosAddCol(tbl); };
+  wrap.appendChild(tools);
+  wrap.appendChild(tbl);
+  ta.style.display = "none";
+  form.insertBefore(wrap, ta);
+
+  form.addEventListener("submit", function () {
+    ta.value = makerosTableToMarkdown(tbl);
+  }, true);
+}
+
+function makerosAddCol(tbl) {
+  Array.prototype.forEach.call(tbl.querySelectorAll("tr"), function (tr, ri) {
+    var cell = document.createElement(ri === 0 ? "th" : "td");
+    cell.contentEditable = "true";
+    if (ri === 0) {
+      var delCol = document.createElement("button");
+      delCol.type = "button"; delCol.className = "table-del-col"; delCol.textContent = "×";
+      delCol.title = "Quitar columna";
+      delCol.onclick = function () {
+        makerosDelCol(tbl, Array.prototype.indexOf.call(tr.children, cell));
+      };
+      cell.appendChild(delCol);
+    }
+    tr.insertBefore(cell, tr.lastChild);  // before the row-delete cell
+  });
+}
+
+function makerosDelCol(tbl, ci) {
+  Array.prototype.forEach.call(tbl.querySelectorAll("tr"), function (tr) {
+    if (tr.children[ci]) { tr.removeChild(tr.children[ci]); }
+  });
+}
+
+document.addEventListener("htmx:afterSwap", function (e) {
+  var t = e.detail.target;
+  if (!t || !t.querySelectorAll) { return; }
+  var form = t.matches && t.matches('.block-form[data-kind="tabla"]')
+    ? t : t.querySelector('.block-form[data-kind="tabla"]');
+  if (form) { makerosInitTableEditor(form); }
+});
+
+// ---- Checklist: click a checkbox in view mode to toggle it ----
+document.addEventListener("click", function (e) {
+  var cb = e.target.closest ? e.target.closest("input.task-check") : null;
+  if (!cb || typeof htmx === "undefined") { return; }
+  var block = cb.closest(".block");
+  var content = cb.closest(".block-content");
+  if (!block || !content) { return; }
+  e.preventDefault();
+  var items = content.querySelectorAll("li.task-item");
+  var line = Array.prototype.indexOf.call(items, cb.closest("li.task-item"));
+  var i = block.id.replace("block-", "");
+  htmx.ajax("POST", content.dataset.editUrl.replace("/editar", "/check/" + line) , {
+    target: "#block-" + i, swap: "outerHTML",
+  });
+});
+
+// ---- Graphical editors for titulo / lista / checklist blocks ----
+function makerosSerializeRows(rows, kind) {
+  var out = [];
+  rows.forEach(function (row) {
+    var text = row.querySelector(".row-text").textContent.trim();
+    if (!text) { return; }
+    if (kind === "checklist") {
+      out.push("- [" + (row.querySelector("input.row-check").checked ? "x" : " ") + "] " + text);
+    } else if (kind === "lista-ordenada") {
+      out.push("1. " + text);
+    } else {
+      out.push("- " + text);
+    }
+  });
+  return out.join("\n");
+}
+
+function makerosInitListEditor(form, kind) {
+  var ta = form.querySelector("textarea[name=text]");
+  if (!ta || form._listEditor) { return; }
+  var lines = ta.value.split("\n").filter(function (l) { return l.trim(); });
+  if (!lines.length) { return; }
+  form._listEditor = true;
+  var ordered = kind === "lista" && /^\s*\d+\.\s/.test(lines[0]);
+  if (kind === "lista") { kind = ordered ? "lista-ordenada" : "lista"; }
+
+  var wrap = document.createElement("div");
+  wrap.className = "list-editor";
+  var tools = document.createElement("div");
+  tools.className = "table-editor-tools";
+  tools.innerHTML = '<button type="button" class="btn-ghost btn-xs" data-act="add">+ Elemento</button>' +
+    '<span class="table-editor-hint">' + (kind === "checklist" ? "Marca la casilla o edita el texto" : "Edita el texto de cada elemento") + "</span>";
+  var list = document.createElement("div");
+  list.className = "list-editor-rows";
+
+  function addRow(text, checked) {
+    var row = document.createElement("div");
+    row.className = "list-editor-row";
+    if (kind === "checklist") {
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.className = "row-check"; cb.checked = !!checked;
+      row.appendChild(cb);
+    } else {
+      var bullet = document.createElement("span");
+      bullet.className = "row-bullet";
+      bullet.textContent = ordered ? "1." : "•";
+      row.appendChild(bullet);
+    }
+    var t = document.createElement("span");
+    t.className = "row-text"; t.contentEditable = "true"; t.textContent = text || "";
+    row.appendChild(t);
+    var del = document.createElement("button");
+    del.type = "button"; del.className = "table-del-row"; del.textContent = "×";
+    del.title = "Quitar elemento";
+    del.onclick = function () { row.remove(); };
+    row.appendChild(del);
+    list.appendChild(row);
+  }
+
+  lines.forEach(function (l) {
+    var m = l.match(/^\s*(?:[-*+]|\d+\.)\s*(?:\[( |x|X)\]\s*)?(.*)$/);
+    if (kind === "checklist" && m && m[2] !== undefined) {
+      addRow(m[3] || "", m[2] === "x" || m[2] === "X");
+    } else {
+      addRow(m && m[3] !== undefined ? m[3] : l, false);
+    }
+  });
+
+  tools.querySelector('[data-act="add"]').onclick = function () { addRow("", false); };
+  wrap.appendChild(tools);
+  wrap.appendChild(list);
+  ta.style.display = "none";
+  form.insertBefore(wrap, ta);
+  form.addEventListener("submit", function () {
+    ta.value = makerosSerializeRows(
+      Array.prototype.slice.call(list.querySelectorAll(".list-editor-row")), kind);
+  }, true);
+}
+
+function makerosInitTitleEditor(form) {
+  var ta = form.querySelector("textarea[name=text]");
+  if (!ta || form._titleEditor) { return; }
+  form._titleEditor = true;
+  var m = ta.value.match(/^(#+)\s*(.*)$/);
+  var level = m ? m[1].length : 1;
+  var text = m ? m[2] : ta.value;
+  var wrap = document.createElement("div");
+  wrap.className = "title-editor";
+  var btns = document.createElement("div");
+  btns.className = "table-editor-tools";
+  [1, 2, 3].forEach(function (n) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn-ghost btn-xs" + (n === level ? " active" : "");
+    b.textContent = "H" + n;
+    b.onclick = function () {
+      level = n;
+      Array.prototype.forEach.call(btns.children, function (x) { x.classList.remove("active"); });
+      b.classList.add("active");
+    };
+    btns.appendChild(b);
+  });
+  var t = document.createElement("div");
+  t.className = "title-editor-text";
+  t.contentEditable = "true";
+  t.textContent = text;
+  wrap.appendChild(btns);
+  wrap.appendChild(t);
+  ta.style.display = "none";
+  form.insertBefore(wrap, ta);
+  form.addEventListener("submit", function () {
+    var s = t.textContent.trim();
+    ta.value = s ? "#".repeat(level) + " " + s : "";
+  }, true);
+}
+
+document.addEventListener("htmx:afterSwap", function (e) {
+  var t = e.detail.target;
+  if (!t || !t.querySelectorAll) { return; }
+  var form = t.matches && t.matches(".block-form") ? t : t.querySelector(".block-form");
+  if (!form) { return; }
+  var kind = form.dataset.kind;
+  if (kind === "lista" || kind === "checklist") { makerosInitListEditor(form, kind); }
+  else if (kind === "titulo") { makerosInitTitleEditor(form); }
+});

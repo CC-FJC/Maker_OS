@@ -1,0 +1,20 @@
+# Keep the build context small: the image bakes only code + templates.
+# Content, private notes, DB, backups and venvs are mounted/volumes at runtime.
+.venv
+__pycache__
+*.pyc
+.git
+content
+data
+private
+backups
+docs
+tests
+.makeros.log
+.makeros.err.log
+.makeros.pid
+.env
+*.egg-info
+.dockerignore
+Dockerfile
+docker-compose.yml
