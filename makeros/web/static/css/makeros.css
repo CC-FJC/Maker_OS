@@ -1850,3 +1850,127 @@ html[data-sidebar="collapsed"] .nav-reorder-toggle { opacity: 1; }
 .table-editor-tools .btn-xs.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .task-item { list-style: none; }
 .task-item .task-check { margin-right: 6px; accent-color: var(--accent); cursor: pointer; }
+
+/* ---------- Block drag handle (reorder) ---------- */
+.block-drag-handle {
+  position: absolute; left: -22px; top: 8px; padding: 3px 2px;
+  color: var(--muted); cursor: grab; opacity: 0;
+  transition: opacity 0.15s; border-radius: 4px; line-height: 0;
+}
+.block:hover .block-drag-handle, .block-drag-handle:active { opacity: 1; }
+.block-drag-handle:hover { color: var(--accent); }
+.block-drag-handle .icon { width: 14px; height: 14px; }
+.blocks { padding-left: 26px; }
+.block.sortable-ghost { opacity: 0.4; }
+
+/* ---------- Command palette (Ctrl+K) ---------- */
+.palette-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgb(15 14 26 / 22%); backdrop-filter: blur(1px);
+  display: flex; justify-content: center; align-items: flex-start;
+  padding-top: 12vh;
+}
+.palette {
+  width: min(560px, 92vw); background: var(--card);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 50px rgb(15 14 26 / 28%); overflow: hidden;
+}
+#cmd-input {
+  width: 100%; border: 0; border-bottom: 1px solid var(--border);
+  padding: 12px 14px; font: inherit; font-size: 15px;
+  background: transparent; color: var(--text-title); outline: none;
+}
+.palette-results { list-style: none; margin: 0; padding: 6px; max-height: 46vh; overflow-y: auto; }
+.palette-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
+}
+.palette-item.active { background: var(--sidebar-hover); }
+.palette-hint-item { font-size: 12px; color: var(--muted); }
+.palette-empty { padding: 14px; color: var(--muted); font-size: 13.5px; text-align: center; }
+.palette-hint {
+  margin: 0; padding: 8px 12px; font-size: 11.5px; color: var(--muted);
+  border-top: 1px solid var(--border); background: var(--sidebar-bg);
+}
+
+/* ---------- Grid view (sortable table) ---------- */
+.grid-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.grid-table th {
+  text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); padding: 8px 10px; border-bottom: 2px solid var(--border);
+  user-select: none; white-space: nowrap;
+}
+.grid-table th.sortable { cursor: pointer; }
+.grid-table th.sortable:hover { color: var(--text-title); }
+.grid-table th.sort-asc::after { content: " ▲"; font-size: 9px; color: var(--accent); }
+.grid-table th.sort-desc::after { content: " ▼"; font-size: 9px; color: var(--accent); }
+.grid-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.grid-table tbody tr:hover { background: var(--sidebar-hover); }
+.grid-table .row-icon { margin-right: 6px; }
+
+/* ---------- Gallery view ---------- */
+.gallery-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.gallery-card .card-banner { height: 140px; border-radius: 8px 8px 0 0; }
+.gallery-card .card-icon .icon-lg { width: 40px; height: 40px; }
+
+/* ---------- Calendar: task chips ---------- */
+.cal-chip.task {
+  border: 1px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+}
+
+/* ---------- Timeline view ---------- */
+.timeline { position: relative; overflow-x: auto; padding-bottom: 8px; }
+.timeline-row { display: flex; align-items: center; gap: 0; min-width: 640px; }
+.timeline-label {
+  width: 160px; flex: none; padding: 6px 10px; font-size: 13.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.timeline-track { position: relative; flex: 1; height: 26px; }
+.timeline-days { display: flex; height: 18px; }
+.tl-day {
+  flex: 1; font-size: 10px; color: var(--muted); border-left: 1px solid var(--border);
+  padding-left: 2px; overflow: hidden;
+}
+.tl-day.tl-today { color: var(--accent); font-weight: 700; }
+.timeline-bar {
+  position: absolute; top: 4px; height: 18px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 75%, var(--card));
+  min-width: 6px;
+}
+.timeline-bar.st-done, .timeline-bar.st-archived { background: var(--muted); }
+.timeline-bar.st-paused { background: color-mix(in srgb, var(--accent) 35%, var(--card)); }
+.timeline-today {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: var(--accent); opacity: 0.6; pointer-events: none;
+}
+
+/* ---------- Backlinks + person sections on pages ---------- */
+.page-backlinks, .page-person { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 14px; }
+.page-backlinks h2, .page-person h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 8px; }
+
+/* ---------- Whiteboard (pizarra) ---------- */
+.board-wrap { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.board-tools {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--card);
+}
+.board-tool.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.board-colors { display: inline-flex; gap: 4px; margin: 0 6px; }
+.board-color {
+  width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0;
+}
+.board-color.active { border-color: var(--text-title); }
+.board-status { margin-left: auto; font-size: 12px; color: var(--muted); }
+.board-canvas { display: block; width: 100%; cursor: crosshair; touch-action: none; }
+#board-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ---------- Assistant ---------- */
+.assistant-form-col { flex-direction: column; align-items: stretch; }
+.assistant-form-col textarea {
+  width: 100%; resize: vertical; font: inherit; font-size: 14px;
+  padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text);
+}
+#assistant-model { max-width: 260px; }
+.assistant-card h2 { font-size: 15px; margin: 0 0 4px; }

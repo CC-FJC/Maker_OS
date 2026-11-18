@@ -65,7 +65,7 @@
           <a class="item-title" href="/{{ ev.path }}">{{ ev.title }}</a>
           <span class="item-meta">
             {{ ev.date }}{% if ev.time %} · {{ ev.time }}{% endif %} ·
-            {{ cat_labels.get(ev.cat, "Evento") }}
+            {{ {"event": "Evento", "project": "Proyecto", "task": "Tarea"}.get(ev.kind, "Evento") }}{% if ev.cat and cat_labels.get(ev.cat) %} · {{ cat_labels[ev.cat] }}{% endif %}
           </span>
         </li>
         {% else %}

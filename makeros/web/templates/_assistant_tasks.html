@@ -1,0 +1,12 @@
+{% if error %}<p class="modal-error">{{ error }}</p>{% endif %}
+{% if created %}
+<p>Se crearon {{ created | length }} tareas:</p>
+<ul class="item-list">
+  {% for t in created %}
+  <li class="item-row">
+    <a class="item-title" href="/{{ t["path"] }}">{{ t["title"] }}</a>
+    <span class="badge st-todo">por hacer</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}

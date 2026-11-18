@@ -205,3 +205,45 @@ def graph_data(conn: sqlite3.Connection) -> dict:
         if project:
             add_edge(doc["path"], f"projects/{project}/project")
     return {"nodes": nodes, "edges": edges}
+
+
+def backlinks_for(conn: sqlite3.Connection, path: str) -> list[dict]:
+    """Pages that link to `path`: [[wikilinks]] (by relative path or last
+    segment, like Obsidian) plus task/research -> project frontmatter."""
+    docs: list[tuple[str, sqlite3.Row]] = []
+    for slug in BRAIN_COLLECTIONS:
+        for doc in list_collection(conn, slug):
+            docs.append((slug, doc))
+    rel = path[len("wiki/"):] if path.startswith("wiki/") else path
+    tail = path.rsplit("/", 1)[-1]
+    project_slug = ""
+    if path.startswith("projects/") and path.endswith("/project"):
+        project_slug = path.split("/")[1]
+
+    found: dict[str, dict] = {}
+    for collection, doc in docs:
+        if doc["path"] == path:
+            continue
+        hit = False
+        for match in WIKILINK.finditer(doc["body"] or ""):
+            raw = match.group(1).strip()
+            if raw.endswith(".md"):
+                raw = raw[:-3]
+            raw = raw.replace(" ", "-")
+            if raw == rel or raw == tail or raw == path:
+                hit = True
+                break
+        if not hit and project_slug:
+            try:
+                meta = json.loads(doc["meta_json"] or "{}")
+            except ValueError:
+                meta = {}
+            if str(meta.get("project") or "").strip() == project_slug:
+                hit = True
+        if hit:
+            found[doc["path"]] = {
+                "path": doc["path"],
+                "title": doc["title"] or doc["path"],
+                "collection": collection,
+            }
+    return sorted(found.values(), key=lambda b: b["title"].lower())

@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from ... import frontmatter
 from ...indexer import index_file, search_documents
@@ -73,14 +74,186 @@ def _sources_for(conn: sqlite3.Connection, settings, query: str) -> list[dict]:
 async def assistant(request: Request, conn: ConnDep, user: UserDep):
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    base, model = llm.llm_config(conn)
     return templates.TemplateResponse(
         request,
         "asistente.html",
         base_ctx(
             request, conn, user,
             llm_ready=llm.configured(conn),
+            llm_base_url=base,
+            llm_model=model,
+            llm_models=llm.list_models(base) if base else [],
+            is_admin=user["role"] == "admin",
         ),
     )
+
+
+@router.get("/asistente/modelos")
+async def assistant_models(request: Request, conn: ConnDep, user: UserDep):
+    """Live model list from the configured local server (any logged-in user)."""
+    if user is None:
+        return JSONResponse({"models": []})
+    base, model = llm.llm_config(conn)
+    return JSONResponse(
+        {"models": llm.list_models(base) if base else [], "model": model, "base_url": base}
+    )
+
+
+@router.post("/asistente/modelo")
+async def assistant_set_model(
+    request: Request, conn: ConnDep, user: UserDep,
+    modelo: Annotated[str, Form()],
+):
+    """Switch the assistant model (admin only; instance-wide setting)."""
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403)
+    base, _current = llm.llm_config(conn)
+    llm.save_config(conn, base, modelo)
+    return JSONResponse({"ok": True, "model": modelo.strip()})
+
+
+TASK_EXTRACT_PROMPT = (
+    "De las notas de reunión que siguen, extrae SOLO las tareas accionables. "
+    "Devuelve únicamente un checklist markdown, una línea por tarea, así: "
+    "- [ ] Tarea concreta (máx. 8 palabras)\n"
+    "Sin texto adicional, sin numeración, sin explicaciones. Si no hay tareas, responde: NINGUNA"
+)
+
+
+@router.post("/asistente/tareas")
+async def assistant_tasks(
+    request: Request, conn: ConnDep, user: UserDep,
+    notas: Annotated[str, Form()],
+):
+    """Meeting notes -> task files: the local model extracts a checklist,
+    each item becomes content/tasks/<slug>.md (status todo)."""
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    notas = notas.strip()
+    created: list[dict] = []
+    error = ""
+    if notas and llm.configured(conn):
+        raw = llm.chat(
+            conn,
+            [
+                {"role": "system", "content": TASK_EXTRACT_PROMPT},
+                {"role": "user", "content": notas},
+            ],
+        )
+        if raw is None:
+            error = "El modelo no respondió; las tareas no se crearon."
+        elif raw.strip() == "NINGUNA":
+            error = "El modelo no encontró tareas accionables en el texto."
+        else:
+            import re as _re
+            for line in raw.splitlines():
+                m = _re.match(r"^\s*-\s*\[\s*[xX]?\s*\]\s*(.+)$", line)
+                if not m:
+                    continue
+                title = m.group(1).strip().strip("*_`")
+                if not title:
+                    continue
+                slug = _re.sub(r"[^a-zA-Z0-9-]", "-", title.lower()).strip("-")[:60] or "tarea"
+                file = settings.content_dir / "tasks" / f"{slug}.md"
+                n = 2
+                while file.exists():
+                    file = settings.content_dir / "tasks" / f"{slug}-{n}.md"
+                    n += 1
+                frontmatter.write(file, {"title": title, "status": "todo"}, "")
+                index_file(conn, settings.content_dir, file)
+                created.append(
+                    {"title": title, "path": f"tasks/{file.stem}"}
+                )
+            if not created:
+                error = "No se pudo crear ninguna tarea del texto."
+    elif notas:
+        error = "El asistente no tiene modelo configurado."
+    return templates.TemplateResponse(
+        request,
+        "_assistant_tasks.html",
+        base_ctx(request, conn, user, created=created, error=error),
+    )
+
+
+DIGEST_PROMPT = (
+    "Eres el asistente de MakerOS, un laboratorio de prototipado. Escribe un "
+    "digest semanal en español (máx. 250 palabras) sobre la actividad del lab: "
+    "qué páginas se crearon o editaron y qué eventos hubo esta semana. Usa un "
+    "título H1, secciones con H2 y viñetas; enlaza las páginas con [[ruta-sin-.md]]. "
+    "Devuelve SOLO el markdown del digest."
+)
+
+
+@router.post("/asistente/digest")
+async def assistant_digest(request: Request, conn: ConnDep, user: UserDep):
+    """Weekly digest: summarize the last 7 days of edits + events with the
+    local model and save it as content/wiki/reports/digest-<date>.md."""
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    if not llm.configured(conn):
+        raise HTTPException(status_code=400, detail="El asistente no tiene modelo configurado.")
+    from ...indexer import recent_documents
+    from .. import event_store
+
+    week_ago = date.today() - timedelta(days=7)
+    docs = [
+        d for d in recent_documents(conn, 60)
+        if _day(d["indexed_at"]) and _day(d["indexed_at"]) >= week_ago
+    ]
+    events = [
+        e for e in event_store.iter_events(conn)
+        if _day(e["start"]) and week_ago <= _day(e["start"]) <= date.today() + timedelta(days=7)
+    ]
+    if not docs and not events:
+        raise HTTPException(status_code=400, detail="No hay actividad esta semana.")
+    context = "Páginas tocadas esta semana:\n" + "\n".join(
+        f"- [{d['collection']}] {d['path']} ({d['indexed_at']})" for d in docs[:25]
+    )
+    context += "\n\nEventos de la semana:\n" + "\n".join(
+        f"- {e['start']} — {e['summary']}" for e in events[:25]
+    )
+    digest = llm.chat(
+        conn,
+        [
+            {"role": "system", "content": DIGEST_PROMPT},
+            {"role": "user", "content": context},
+        ],
+    )
+    if digest is None:
+        raise HTTPException(status_code=400, detail="El modelo no respondió.")
+    stamp = date.today().isoformat()
+    reports = settings.content_dir / "wiki" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    file = reports / f"digest-{stamp}.md"
+    n = 2
+    while file.exists():
+        file = reports / f"digest-{stamp}-{n}.md"
+        n += 1
+    frontmatter.write(
+        file, {"title": f"Digest semanal — {stamp}", "tags": ["digest", "semanal"]}, digest
+    )
+    index_file(conn, settings.content_dir, file)
+    return RedirectResponse(f"/wiki/reports/{file.stem}", status_code=303)
+
+
+def _day(value) -> object | None:
+    if value is None:
+        return None
+    if hasattr(value, "date"):
+        return value.date() if isinstance(value, datetime) else value
+    try:
+        return datetime.fromisoformat(str(value)[:10]).date()
+    except ValueError:
+        return None
 
 
 @router.post("/asistente/preguntar")

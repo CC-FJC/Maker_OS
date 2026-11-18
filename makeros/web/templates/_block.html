@@ -1,6 +1,7 @@
 {% for b in blocks %}
 <div class="block" id="block-{{ b["i"] }}" data-page-url="{{ page_url }}">
   {% if user and user["role"] != "viewer" %}
+  <span class="block-drag-handle" title="Arrastrar para reordenar">{{ icon("move") }}</span>
   <details class="block-menu">
     <summary title="Opciones del bloque" aria-label="Opciones del bloque">
       {{ icon("more-vertical") }}

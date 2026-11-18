@@ -111,7 +111,7 @@ def parse_month(value: str, today: date) -> tuple[int, int]:
     return today.year, today.month
 
 
-def _dated_items(conn, collection: str, kind: str, start_key: str, end_key: str):
+def _dated_items(conn, collection: str, kind: str, start_key: str, end_key: str, cat: str = ""):
     """Yield (DayItem, start, end) for every document with usable dates.
 
     Calendar EVENTS no longer come from here — they live in
@@ -126,7 +126,8 @@ def _dated_items(conn, collection: str, kind: str, start_key: str, end_key: str)
         time = ""
         if isinstance(start, datetime) and (start.hour or start.minute):
             time = start.strftime("%H:%M")
-        cat = "proyecto" if kind == "project" else ""
+        if not cat:
+            cat = "proyecto" if kind == "project" else ""
         item = DayItem(path=row["path"], title=row["title"], kind=kind, time=time, cat=cat)
         yield item, start, end
 
@@ -161,6 +162,9 @@ def day_map(conn) -> dict[date, list[DayItem]]:
     for item, start, end in _dated_items(conn, "projects", "project", "start", "due"):
         for day in {to_day(start), to_day(end)}:
             days[day].append(item)
+    # Tasks land on their due date (unified calendar: events + milestones + tasks).
+    for item, start, _end in _dated_items(conn, "tasks", "task", "due", "due", cat="tarea"):
+        days[to_day(start)].append(item)
     return days
 
 

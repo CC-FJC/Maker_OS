@@ -307,6 +307,28 @@ async def notes_edit_form(
     )
 
 
+@router.post("/notas/{path:path}/bloques/reordenar")
+async def notes_reorder(
+    path: str, request: Request, conn: ConnDep, user: UserDep,
+    orden: str = Form(...),
+):
+    """Drag & drop reorder of blocks in a private note."""
+    if user is None:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file = _note_file(settings, user, path)
+    meta, body = frontmatter.read(file)
+    blocks = split_blocks(body)
+    try:
+        order = [int(x) for x in orden.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="orden no válido") from None
+    if sorted(order) != list(range(len(blocks))):
+        raise HTTPException(status_code=400, detail="orden no válido")
+    _save(settings, user, file, meta, [blocks[i].text for i in order])
+    return HTMLResponse("ok")
+
+
 @router.post("/notas/{path:path}/bloques/{block_index:int}/check/{line:int}")
 async def notes_toggle_check(
     path: str, block_index: int, line: int, request: Request, conn: ConnDep, user: UserDep

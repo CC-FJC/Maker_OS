@@ -32,6 +32,41 @@ def save_config(conn: sqlite3.Connection, base_url: str, model: str) -> None:
     set_ui(conn, KEY_MODEL, model.strip())
 
 
+def list_models(base_url: str, timeout: float = 5.0) -> list[str]:
+    """Model ids from an OpenAI-compatible server (LM Studio / Ollama).
+
+    `/v1/models` only lists *loaded* models in LM Studio, so the LM
+    Studio developer API `/api/v0/models` is merged in to also offer
+    the downloaded-but-not-loaded ones.
+    """
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def add(items) -> None:
+        for item in items:
+            mid = item.get("id") if isinstance(item, dict) else str(item)
+            if mid and mid not in seen:
+                seen.add(mid)
+                ids.append(mid)
+
+    base = base_url.strip().rstrip("/")
+    if base:
+        try:
+            r = httpx.get(f"{base}/models", timeout=timeout)
+            r.raise_for_status()
+            add(r.json().get("data", []))
+        except Exception:  # noqa: BLE001 — offline is a normal state
+            pass
+        root = base[:-3] if base.endswith("/v1") else base
+        try:
+            r = httpx.get(f"{root}/api/v0/models", timeout=timeout)
+            r.raise_for_status()
+            add(r.json().get("data", []))
+        except Exception:  # noqa: BLE001
+            pass
+    return sorted(ids, key=str.lower)
+
+
 def configured(conn: sqlite3.Connection) -> bool:
     base, model = llm_config(conn)
     return bool(base and model)

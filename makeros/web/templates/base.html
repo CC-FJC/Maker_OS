@@ -184,5 +184,16 @@
     <div class="brain-resize" id="brain-resize"
          title="Arrastra para cambiar el tamaño" aria-hidden="true"></div>
   </div>
+
+  {% if user %}
+  <div class="palette-overlay" id="cmd-palette" hidden>
+    <div class="palette" role="dialog" aria-label="Paleta de comandos">
+      <input type="text" id="cmd-input" placeholder="Buscar páginas o escribir un comando…"
+             aria-label="Buscar" autocomplete="off">
+      <ul class="palette-results" id="cmd-results"></ul>
+      <p class="palette-hint">↑↓ navegar · Enter abrir · Esc cerrar · Ctrl+K paleta</p>
+    </div>
+  </div>
+  {% endif %}
 </body>
 </html>

@@ -10,7 +10,7 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from ... import auth, backups
 from ...indexer import reindex_all
@@ -39,6 +39,7 @@ def _admin_response(request: Request, conn: sqlite3.Connection, user):
     settings = get_settings(request)
     base = settings.base_url or str(request.base_url)
     llm_base_url, llm_model = llm.llm_config(conn)
+    llm_models = llm.list_models(llm_base_url) if llm_base_url else []
     return templates.TemplateResponse(
         request,
         "admin.html",
@@ -55,6 +56,7 @@ def _admin_response(request: Request, conn: sqlite3.Connection, user):
             feed_url=f"{base}/calendario.ics?token={get_feed_token(conn)}",
             llm_base_url=llm_base_url,
             llm_model=llm_model,
+            llm_models=llm_models,
             backup_list=backups.list_backups(settings),
             backup_interval=backups.interval_hours(conn),
             backup_keep=backups.keep_count(conn),
@@ -299,6 +301,19 @@ async def admin_config(
         return fail
     set_ui(conn, "site:name", site_name.strip())
     return RedirectResponse("/admin#integracion", status_code=303)
+
+
+@router.get("/admin/llm/modelos")
+async def admin_llm_models(request: Request, conn: ConnDep, user: UserDep):
+    """Live model list from the configured LM Studio / Ollama server."""
+    if (fail := _auth_fail(user)) is not None:
+        return fail
+    base, _model = llm.llm_config(conn)
+    if not base:
+        return JSONResponse({"models": [], "error": "Configura primero la dirección del servidor."})
+    models = llm.list_models(base)
+    error = None if models else "El servidor no respondió (¿LM Studio está corriendo?)."
+    return JSONResponse({"models": models, "error": error})
 
 
 @router.post("/admin/llm")

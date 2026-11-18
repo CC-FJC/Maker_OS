@@ -8,10 +8,11 @@ through the frontmatter module and refresh the index immediately.
 
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import unicodedata
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -21,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from ... import frontmatter
 from ...collections import COLLECTIONS, STATUS_FILTERS, STATUS_LABELS, TASK_STATUSES
 from ...frontmatter import FrontmatterError
-from ...indexer import index_file, remove_document
+from ...indexer import index_file, list_collection, remove_document
 from ...ui import get_ui, set_ui
 from .. import event_store, vault
 from ..blocks import BLOCK_SEEDS, infer_kind, join_blocks, split_blocks, toggle_checkbox
@@ -36,6 +37,7 @@ from ..calendar import (
     parse_month,
     parse_when,
     rotate_feed_token,
+    to_day,
 )
 from ..deps import ConnDep, UserDep, base_ctx, get_settings
 from ..forms import TASK_PRIORITIES, fields_for
@@ -54,7 +56,7 @@ from ..uploads import (
 router = APIRouter()
 
 EDIT_ROLES = ("admin", "member")
-VIEWS = ("lista", "tarjetas", "kanban", "arbol")
+VIEWS = ("lista", "tarjetas", "kanban", "arbol", "grid", "galeria", "timeline")
 # Collections whose index page has the folder system (cards + tag filter).
 FOLDER_COLLECTIONS = ("wiki", "research", "inventory")
 
@@ -301,6 +303,9 @@ async def collection_index(collection: str, request: Request, conn: ConnDep, use
     # Kanban only exists for tasks; everywhere else it falls back to tarjetas.
     if vista == "kanban" and collection != "tasks":
         vista = "tarjetas"
+    # Timeline only exists for projects.
+    if vista == "timeline" and collection != "projects":
+        vista = "tarjetas"
     items = collection_items(
         conn, collection, task_stats=project_task_stats(conn) if collection == "projects" else None
     )
@@ -330,6 +335,10 @@ async def collection_index(collection: str, request: Request, conn: ConnDep, use
     task_groups = None
     if collection == "tasks":
         task_groups = _group_by_project(conn, items)
+    # Timeline (projects only): day window + positioned bars.
+    timeline = None
+    if collection == "projects" and vista == "timeline":
+        timeline = _project_timeline(conn, items)
     response = templates.TemplateResponse(
         request,
         "list.html",
@@ -347,6 +356,7 @@ async def collection_index(collection: str, request: Request, conn: ConnDep, use
             item_tags=tags,
             status_filters=STATUS_FILTERS.get(collection),
             task_groups=task_groups,
+            timeline=timeline,
         ),
     )
     if remember is not None:
@@ -369,6 +379,61 @@ def _collection_folders(items: list[dict], prefix: str) -> list[dict]:
         {"name": name, "count": count}
         for name, count in sorted(counts.items(), key=lambda kv: kv[0].lower())
     ]
+
+
+def _project_timeline(conn, items) -> dict | None:
+    """Day window + positioned bars for the projects timeline view."""
+    today = date.today()
+    by_path = {i["path"]: i for i in items}
+    spans = []
+    starts, ends = [], []
+    for row in list_collection(conn, "projects"):
+        meta = json.loads(row["meta_json"] or "{}")
+        start = parse_when(meta.get("start"))
+        due = parse_when(meta.get("due"))
+        if start is None and due is None:
+            continue
+        s = to_day(start) if start else to_day(due)
+        e = to_day(due) if due else to_day(start)
+        if e < s:
+            s, e = e, s
+        starts.append(s)
+        ends.append(e)
+        spans.append(
+            {
+                "path": row["path"],
+                "title": row["title"] or row["path"],
+                "status": str(meta.get("status") or ""),
+                "start": s,
+                "end": e,
+                "dates": by_path.get(row["path"], {}).get("dates", ""),
+            }
+        )
+    if not spans:
+        return None
+    lo = min(starts + [today])
+    hi = max(ends + [today + timedelta(days=7)])
+    total = max((hi - lo).days, 1)
+    days = []
+    d = lo
+    while d <= hi:
+        days.append(
+            {
+                "iso": d.isoformat(),
+                "day": d.day,
+                "label": d == lo or d.weekday() == 0,
+                "today": d == today,
+            }
+        )
+        d += timedelta(days=1)
+    for sp in spans:
+        sp["left"] = round(100 * (sp["start"] - lo).days / total, 2)
+        sp["width"] = round(max(100 * (sp["end"] - sp["start"]).days / total, 100 / total), 2)
+    return {
+        "days": days,
+        "projects": spans,
+        "today_left": round(100 * (today - lo).days / total, 2),
+    }
 
 
 def _group_by_project(conn, items: list[dict]) -> list[dict]:
@@ -631,6 +696,42 @@ def _valid_index(blocks: list, index: int) -> bool:
     return 0 <= index < len(blocks)
 
 
+@router.get("/{collection}/{page_path:path}/pizarra")
+async def get_board(
+    collection: str, page_path: str, request: Request, conn: ConnDep, user: UserDep
+):
+    """Whiteboard JSON stored next to the page as <page>.pizarra.json."""
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    settings = get_settings(request)
+    file, _ = _resolve_page(settings, collection, page_path)
+    if not file.is_file():
+        raise HTTPException(status_code=404)
+    board_file = file.with_suffix(".pizarra.json")
+    if board_file.is_file():
+        return FileResponse(board_file, media_type="application/json")
+    return JSONResponse({"elements": []})
+
+
+@router.post("/{collection}/{page_path:path}/pizarra")
+async def save_board(
+    collection: str, page_path: str, request: Request, conn: ConnDep, user: UserDep
+):
+    if user is None or user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file, _ = _resolve_page(settings, collection, page_path)
+    if not file.is_file():
+        raise HTTPException(status_code=404)
+    data = await request.json()
+    elements = data.get("elements")
+    if not isinstance(elements, list) or len(elements) > 5000:
+        raise HTTPException(status_code=400, detail="pizarra no válida")
+    board_file = file.with_suffix(".pizarra.json")
+    board_file.write_text(json.dumps({"elements": elements}, ensure_ascii=False))
+    return JSONResponse({"ok": True})
+
+
 @router.get("/{collection}/{page_path:path}/bloques/{block_index:int}")
 async def get_block(
     collection: str,
@@ -776,6 +877,32 @@ async def toggle_block_check(
     return _block_partial(
         request, user, f"/{collection}/{page_path}", block_index, updated[block_index].text
     )
+
+
+@router.post("/{collection}/{page_path:path}/bloques/reordenar")
+async def reorder_blocks(
+    collection: str,
+    page_path: str,
+    request: Request,
+    conn: ConnDep,
+    user: UserDep,
+    orden: str = Form(...),
+):
+    """Drag & drop reorder: `orden` is the block indices in their new order."""
+    if user is None or user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file, meta, body = _load_for_edit(settings, collection, page_path)
+    blocks = split_blocks(body)
+    try:
+        order = [int(x) for x in orden.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="orden no válido") from None
+    if sorted(order) != list(range(len(blocks))):
+        raise HTTPException(status_code=400, detail="orden no válido")
+    texts = [blocks[i].text for i in order]
+    _save_blocks(conn, settings, file, meta, texts)
+    return HTMLResponse("ok")
 
 
 @router.post("/{collection}/{page_path:path}/bloques/{block_index:int}/borrar")
@@ -1283,6 +1410,64 @@ async def task_edit_save(
     return RedirectResponse(f"/tasks/{page_path}", status_code=303)
 
 
+@router.post("/{collection}/{page_path:path}/publicar")
+async def toggle_public(
+    collection: str,
+    page_path: str,
+    request: Request,
+    conn: ConnDep,
+    user: UserDep,
+):
+    """Publish/unpublish a page: public pages render without login at
+    /public/<collection>/<page> (read-only)."""
+    _collection_or_404(collection)
+    if user is None or user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file, meta, body = _load_for_edit(settings, collection, page_path)
+    meta["public"] = not meta.get("public")
+    frontmatter.write(file, meta, body)
+    index_file(conn, settings.content_dir, file)
+    return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
+
+
+@router.get("/public/{collection}/{page_path:path}")
+async def public_page(collection: str, page_path: str, request: Request, conn: ConnDep):
+    """Read-only public view of a page whose frontmatter has public: true."""
+    info = _collection_or_404(collection)
+    settings = get_settings(request)
+    file, _doc_id = _resolve_page(settings, collection, page_path)
+    if not file.is_file():
+        raise HTTPException(status_code=404)
+    meta, body = frontmatter.read(file)
+    if not meta.get("public"):
+        raise HTTPException(status_code=404)
+    blocks = [
+        {"i": b.index, "kind": b.kind, "html": render_markdown(b.text)}
+        for b in split_blocks(body)
+    ]
+    title = str(meta.get("title") or meta.get("name") or page_path.rsplit("/", 1)[-1])
+    return templates.TemplateResponse(
+        request,
+        "page.html",
+        base_ctx(
+            request,
+            conn,
+            None,  # anonymous
+            collection_slug=collection,
+            collection_label=info["label"],
+            page_path=page_path,
+            page_url=f"/public/{collection}/{page_path}",
+            title=title,
+            meta=meta,
+            blocks=blocks,
+            can_edit=False,
+            backlinks=[],
+            person=None,
+        ),
+    )
+
+
 @router.post("/{collection}/{page_path:path}/fijar")
 async def toggle_pin(
     collection: str,
@@ -1348,6 +1533,11 @@ async def page_view(
         for b in split_blocks(body)
     ]
     title = str(meta.get("title") or meta.get("name") or page_path.rsplit("/", 1)[-1])
+    # Fase C: backlinks ("Enlazado desde") + persona con sus tareas/proyectos.
+    backlinks = vault.backlinks_for(conn, f"{collection}/{page_path}")
+    person = None
+    if collection == "people":
+        person = _person_load(conn, page_path, meta)
     return templates.TemplateResponse(
         request,
         "page.html",
@@ -1363,5 +1553,28 @@ async def page_view(
             meta=meta,
             blocks=blocks,
             can_edit=user["role"] in EDIT_ROLES,
+            backlinks=backlinks,
+            person=person,
         ),
     )
+
+
+def _person_load(conn, slug: str, meta: dict) -> dict:
+    """Tasks and projects assigned to a person (by page slug or username)."""
+    from ..listing import collection_items
+
+    keys = {slug, str(meta.get("username") or "").strip()} - {""}
+    tasks = [t for t in collection_items(conn, "tasks") if t["assignee"] in keys]
+    projects = []
+    for row in list_collection(conn, "projects"):
+        pmeta = json.loads(row["meta_json"] or "{}")
+        lead = str(pmeta.get("lead") or "").strip()
+        members = pmeta.get("members") or []
+        if isinstance(members, str):
+            members = [members]
+        if keys & {lead, *[str(m).strip() for m in members]}:
+            projects.append(
+                {"path": row["path"], "title": row["title"] or row["path"],
+                 "status": str(pmeta.get("status") or "")}
+            )
+    return {"tasks": tasks, "projects": projects}

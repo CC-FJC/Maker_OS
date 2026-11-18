@@ -8,9 +8,26 @@
       {{ icon("cpu") }}
       <span>Asistente</span>
     </h1>
+    <div class="header-actions">
+      {% if is_admin %}
+      <select id="assistant-model" aria-label="Modelo del asistente"
+              title="Modelo servido por LM Studio (se carga solo al usarse)">
+        {% for m in llm_models %}
+        <option value="{{ m }}"{% if m == llm_model %} selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+        {% if llm_model and llm_model not in llm_models %}
+        <option value="{{ llm_model }}" selected>{{ llm_model }} (guardado)</option>
+        {% endif %}
+      </select>
+      <button type="button" class="btn-ghost" onclick="makerosAssistantReloadModels()"
+              title="Volver a pedir la lista de modelos al servidor">Recargar</button>
+      {% else %}
+      <span class="admin-muted" title="Servidor: {{ llm_base_url }}">Modelo: <strong>{{ llm_model or "—" }}</strong></span>
+      {% endif %}
+    </div>
   </div>
   <p class="page-subtitle">Pregunta sobre la documentación del laboratorio.
-    Busca en todas las páginas y responde con el modelo local.</p>
+    Busca en todas las páginas y responde con el modelo local ({{ llm_base_url or "sin configurar" }}).</p>
 </header>
 
 <div class="assistant-card">
@@ -32,4 +49,31 @@
 
   <div id="assistant-answer" class="assistant-answer-zone" aria-live="polite"></div>
 </div>
+
+{% if user and user["role"] != "viewer" %}
+<div class="assistant-card">
+  <h2>Notas de reunión → tareas</h2>
+  <p class="page-subtitle">Pega las notas y el modelo extrae las tareas accionables;
+    cada una se crea como página en <code>/tasks</code> con estado «por hacer».</p>
+  <form hx-post="/asistente/tareas" hx-target="#assistant-tasks"
+        hx-swap="innerHTML" hx-indicator="#assistant-tasks-busy" class="assistant-form assistant-form-col">
+    <textarea name="notas" rows="5" required
+              placeholder="- Jacob trae las llaves del taller el martes&#10;- Se decide renovar la cortadora láser&#10;- Café con el decano el jueves 10:00"></textarea>
+    <button class="btn-primary" type="submit">Extraer tareas</button>
+  </form>
+  <p id="assistant-tasks-busy" class="htmx-indicator assistant-busy">Pensando con el modelo local…</p>
+  <div id="assistant-tasks" aria-live="polite"></div>
+</div>
+
+{% if user and user["role"] != "viewer" %}
+<div class="assistant-card">
+  <h2>Digest semanal</h2>
+  <p class="page-subtitle">Resume con el modelo local los cambios y eventos de los últimos
+    7 días y lo guarda como página wiki en <code>/wiki/reports</code>.</p>
+  <form method="post" action="/asistente/digest" class="admin-tool">
+    <button class="btn-primary" type="submit">Generar digest de la semana</button>
+  </form>
+</div>
+{% endif %}
+{% endif %}
 {% endblock %}

@@ -147,17 +147,21 @@
 
 <section class="admin-tab" data-tab="contenido" role="tabpanel">
   <h2>Plantillas de creación</h2>
-  <p class="admin-muted">Contenido con el que nacen las páginas nuevas de cada sección:</p>
-  <ul class="item-list">
+  <p class="admin-muted">Contenido con el que nacen las páginas nuevas de cada sección.
+    Pulsa una tarjeta para editar la plantilla.</p>
+  <div class="card-grid template-gallery">
     {% for slug, c in collections.items() %}
     {% if slug not in ("people", "exhibits") %}
-    <li class="item-row">
-      <a class="item-title" href="/{{ slug }}/plantilla">{{ c["label"] }}</a>
-      <span class="item-meta">/templates/ · {{ counts.get(slug, 0) }} páginas</span>
-    </li>
+    <a class="item-card template-card" href="/{{ slug }}/plantilla">
+      <div class="card-head">
+        <span class="card-icon">{{ icon(nav_icons.get(slug) or c.get("icon"), cls="icon icon-lg") }}</span>
+      </div>
+      <span class="card-title">{{ c["label"] }}</span>
+      <span class="card-meta">{{ counts.get(slug, 0) }} páginas · /templates/{{ slug }}.md</span>
+    </a>
     {% endif %}
     {% endfor %}
-  </ul>
+  </div>
 </section>
 
 <section class="admin-tab" data-tab="categorias" role="tabpanel">
@@ -255,14 +259,26 @@
     <input id="llm-base-url" name="base_url" value="{{ llm_base_url }}"
            placeholder="http://localhost:1234/v1" aria-label="Dirección del servidor LLM">
     <label for="llm-model">Modelo</label>
-    <input id="llm-model" name="modelo" value="{{ llm_model }}"
-           placeholder="mistral-small-latest" aria-label="Nombre del modelo">
+    <div class="admin-inline">
+      <select id="llm-model" name="modelo" aria-label="Modelo del asistente">
+        {% if not llm_models %}<option value="{{ llm_model }}" selected>{{ llm_model or "(sin modelos detectados)" }}</option>{% endif %}
+        {% for m in llm_models %}
+        <option value="{{ m }}"{% if m == llm_model %} selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+        {% if llm_model and llm_model not in llm_models %}
+        <option value="{{ llm_model }}" selected>{{ llm_model }} (guardado)</option>
+        {% endif %}
+      </select>
+      <button type="button" class="btn-ghost" onclick="makerosReloadModels()"
+              title="Volver a pedir la lista de modelos al servidor">Recargar lista</button>
+    </div>
     <button class="btn-ghost" type="submit">Guardar</button>
   </form>
-  <p class="admin-muted">Cualquier servidor compatible con la API de OpenAI
-    (LM Studio, Ollama). Déjalo vacío para apagar el asistente; el resto de
-    la plataforma funciona sin él. Se lee la documentación con la búsqueda
-    interna y el modelo responde citando las páginas.</p>
+  <p class="admin-muted" id="llm-status">Cualquier servidor compatible con la API de OpenAI
+    (LM Studio, Ollama). La lista sale de <code>/v1/models</code> y de la API de LM Studio
+    (<code>/api/v0/models</code>), así ves también los modelos descargados sin cargar.
+    Déjalo vacío para apagar el asistente; el resto de la plataforma funciona sin él.
+    Se lee la documentación con la búsqueda interna y el modelo responde citando las páginas.</p>
 
   <h3 class="admin-sub">Canal de calendario (ICS)</h3>
   <p>Dirección de solo lectura para aplicaciones de calendario:</p>

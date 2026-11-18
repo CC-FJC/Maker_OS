@@ -7,7 +7,7 @@
     <h1 class="page-title-with-icon">{% include "_section_icon_picker.html" %}<span>{{ collection_label }}</span></h1>
     <div class="header-actions">
       <nav class="view-toggle" aria-label="Vista">
-        <a class="view-option{% if vista != 'tarjetas' and vista != 'kanban' and vista != 'arbol' %} active{% endif %}"
+        <a class="view-option{% if vista not in ('tarjetas', 'kanban', 'arbol', 'grid', 'galeria', 'timeline') %} active{% endif %}"
            href="/{{ collection_slug }}?vista=lista{% if estado != 'todos' %}&estado={{ estado }}{% endif %}">Lista</a>
         {% if collection_slug == "tasks" %}
         <a class="view-option{% if vista == 'kanban' %} active{% endif %}"
@@ -19,6 +19,17 @@
         {% endif %}
         <a class="view-option{% if vista == 'tarjetas' %} active{% endif %}"
            href="/{{ collection_slug }}?vista=tarjetas{% if estado != 'todos' %}&estado={{ estado }}{% endif %}">Tarjetas</a>
+        <a class="view-option{% if vista == 'grid' %} active{% endif %}"
+           href="/{{ collection_slug }}?vista=grid{% if estado != 'todos' %}&estado={{ estado }}{% endif %}"
+           title="Tabla con columnas ordenables">Grid</a>
+        <a class="view-option{% if vista == 'galeria' %} active{% endif %}"
+           href="/{{ collection_slug }}?vista=galeria{% if estado != 'todos' %}&estado={{ estado }}{% endif %}"
+           title="Tarjetas grandes con portada">Galería</a>
+        {% if collection_slug == "projects" %}
+        <a class="view-option{% if vista == 'timeline' %} active{% endif %}"
+           href="/{{ collection_slug }}?vista=timeline{% if estado != 'todos' %}&estado={{ estado }}{% endif %}"
+           title="Línea de tiempo con las fechas de cada proyecto">Timeline</a>
+        {% endif %}
       </nav>
       {% if collection_slug == "wiki" %}
       <a class="btn-ghost" href="/wiki/grafos" title="Ver el grafo de conexiones">{{ icon("git-branch") }} Grafo</a>
@@ -58,7 +69,7 @@
   {% endif %}
 </header>
 
-{% if collection_slug == "tasks" and vista != "tarjetas" %}
+{% if collection_slug == "tasks" and vista not in ("tarjetas", "grid", "galeria", "timeline") %}
 {% for group in task_groups %}
 <section class="project-group">
   <h2 class="project-group-title">
@@ -187,6 +198,92 @@
   <p class="item-empty">Todavía no hay nada aquí. Añade la primera página con «+ Añadir».</p>
   {% endfor %}
 </div>
+{% elif vista == "timeline" and timeline %}
+<div class="timeline">
+  <div class="timeline-row timeline-head">
+    <span class="timeline-label"></span>
+    <div class="timeline-track timeline-days">
+      {% for d in timeline["days"] %}
+      <span class="tl-day{% if d.today %} tl-today{% endif %}">{% if d.label %}{{ d.day }}{% endif %}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% for p in timeline["projects"] %}
+  <div class="timeline-row">
+    <a class="timeline-label" href="/{{ p["path"] }}" title="{{ p["title"] }}">
+      {{ p["title"] }}</a>
+    <div class="timeline-track">
+      <span class="timeline-bar st-{{ p["status"] or 'idea' }}"
+            style="left: {{ p["left"] }}%; width: {{ p["width"] }}%"
+            title="{{ p["title"] }} — {{ p["dates"] }}"></span>
+    </div>
+  </div>
+  {% endfor %}
+  <span class="timeline-today" style="left: calc(160px + (100% - 160px) * {{ timeline["today_left"] / 100 }})"
+        title="Hoy"></span>
+</div>
+{% elif vista == "galeria" %}
+<div class="card-grid gallery-grid">
+  {% for item in items %}
+  <a class="item-card gallery-card" href="/{{ item["path"] }}">
+    {% include "_card.html" %}
+  </a>
+  {% else %}
+  <p class="item-empty">Todavía no hay nada aquí. Añade la primera página con «+ Añadir».</p>
+  {% endfor %}
+</div>
+{% elif vista == "grid" %}
+<table class="grid-table">
+  <thead>
+    <tr>
+      <th data-sort="title" class="sortable">Título</th>
+      {% if items and items[0].get("status") %}<th data-sort="status" class="sortable">Estado</th>{% endif %}
+      {% if items and items[0].get("project") %}<th data-sort="project" class="sortable">Proyecto</th>{% endif %}
+      {% if items and items[0].get("priority") %}<th data-sort="priority" class="sortable">Prioridad</th>{% endif %}
+      {% if items and items[0].get("assignee") %}<th data-sort="assignee" class="sortable">Responsable</th>{% endif %}
+      {% if items and items[0].get("dates") %}<th data-sort="dates" class="sortable">Fechas</th>{% endif %}
+      {% if collection_slug == "projects" and items and items[0].get("tasks") %}<th data-sort="progress" class="sortable">Progreso</th>{% endif %}
+      {% if item_tags %}<th data-sort="tags" class="sortable">Etiquetas</th>{% endif %}
+      <th data-sort="indexed_at" class="sortable">Actualizado</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr data-title="{{ (item['title'] or item['path']) | lower }}"
+        data-status="{{ item['status'] }}"
+        data-project="{{ item['project'] | lower }}"
+        data-priority="{{ item['priority'] }}"
+        data-assignee="{{ item['assignee'] | lower }}"
+        data-dates="{{ item['dates'] }}"
+        data-progress="{{ (100 * item['tasks']['done'] / item['tasks']['total']) if item.get('tasks') and item['tasks']['total'] else 0 }}"
+        data-tags="{{ item['tags'] | join(',') | lower }}"
+        data-indexed_at="{{ item['indexed_at'] }}">
+      <td><span class="row-icon">{{ icon(item["icon"]) }}</span>
+        <a class="item-title" href="/{{ item['path'] }}">{{ item['title'] or item['path'] }}</a></td>
+      {% if items[0].get("status") %}
+      <td>{% if item["status"] in status_labels %}<span class="badge st-{{ item['status'] }}">{{ status_labels[item["status"]] }}</span>{% endif %}</td>
+      {% endif %}
+      {% if items[0].get("project") %}
+      <td>{% if item["project"] %}<a href="/projects/{{ item['project'] }}/project">{{ item['project'] }}</a>{% endif %}</td>
+      {% endif %}
+      {% if items[0].get("priority") %}
+      <td>{% if item["priority"] %}<span class="kanban-chip kanban-prio kanban-prio-{{ item['priority'] }}">{{ priority_labels.get(item["priority"], item["priority"]) }}</span>{% endif %}</td>
+      {% endif %}
+      {% if items[0].get("assignee") %}<td>{{ item["assignee"] }}</td>{% endif %}
+      {% if items[0].get("dates") %}
+      <td class="{% if item['vencido'] %}vencido{% endif %}">{{ item["dates"] }}</td>
+      {% endif %}
+      {% if collection_slug == "projects" and items[0].get("tasks") %}
+      <td>{% if item.get("tasks") and item["tasks"]["total"] %}{{ item["tasks"]["done"] }}/{{ item["tasks"]["total"] }}{% endif %}</td>
+      {% endif %}
+      {% if item_tags %}<td>{% for tag in item["tags"] %}<span class="page-tag">{{ tag }}</span>{% endfor %}</td>{% endif %}
+      <td class="item-meta">{{ item["indexed_at"] }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8"><p class="item-empty">Todavía no hay nada aquí. Añade la primera página con «+ Añadir».</p></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% else %}
 <ul class="item-list">
   {% for item in items %}

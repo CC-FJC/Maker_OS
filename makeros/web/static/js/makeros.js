@@ -1179,3 +1179,434 @@ document.addEventListener("htmx:afterSwap", function (e) {
   if (kind === "lista" || kind === "checklist") { makerosInitListEditor(form, kind); }
   else if (kind === "titulo") { makerosInitTitleEditor(form); }
 });
+
+// ---- Block drag & drop reorder (handle on the left of each block) ----
+function makerosInitBlockSortable() {
+  if (typeof Sortable === "undefined") { return; }
+  document.querySelectorAll(".blocks").forEach(function (container) {
+    if (container._makerosSortable) { return; }
+    if (!container.querySelector(".block-drag-handle")) { return; }  // viewers: no handles
+    container._makerosSortable = Sortable.create(container, {
+      handle: ".block-drag-handle",
+      draggable: ".block",
+      animation: 150,
+      onStart: function () { window.makerosBlockDragged = true; },
+      onEnd: function (event) {
+        setTimeout(function () { window.makerosBlockDragged = false; }, 150);
+        var pageUrl = event.item.dataset.pageUrl;
+        var orden = Array.prototype.map.call(
+          container.querySelectorAll(".block"),
+          function (b) { return b.id.replace("block-", ""); }
+        ).join(",");
+        fetch(pageUrl + "/bloques/reordenar", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "orden=" + encodeURIComponent(orden),
+        }).catch(function () { location.reload(); });
+      },
+    });
+  });
+}
+document.addEventListener("DOMContentLoaded", makerosInitBlockSortable);
+document.addEventListener("htmx:afterSwap", makerosInitBlockSortable);
+// After a drag, swallow the click that Sortable also fires (no edit popup).
+document.addEventListener("click", function (e) {
+  if (window.makerosBlockDragged) {
+    window.makerosBlockDragged = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
+
+// Re-run the graphical editors after settle too (covers every swap path).
+document.addEventListener("htmx:afterSettle", function (e) {
+  var t = e.detail.target;
+  if (!t || !t.querySelectorAll) { return; }
+  var form = t.matches && t.matches(".block-form") ? t : t.querySelector(".block-form");
+  if (!form) { return; }
+  var kind = form.dataset.kind;
+  if (kind === "tabla") { makerosInitTableEditor(form); }
+  else if (kind === "lista" || kind === "checklist") { makerosInitListEditor(form, kind); }
+  else if (kind === "titulo") { makerosInitTitleEditor(form); }
+});
+
+// ---- Command palette (Ctrl+K / Cmd+K) ----
+(function () {
+  var overlay = document.getElementById("cmd-palette");
+  if (!overlay) { return; }
+  var input = document.getElementById("cmd-input");
+  var list = document.getElementById("cmd-results");
+  var items = [];   // {label, hint, run}
+  var active = 0;
+  var ACTIONS = [
+    { label: "Nueva tarea", hint: "Acción", run: function () { makerosOpenModal("/tasks/nuevo?fragmento=1"); } },
+    { label: "Nuevo proyecto", hint: "Acción", run: function () { makerosOpenModal("/projects/nuevo?fragmento=1"); } },
+    { label: "Nuevo repositorio", hint: "Acción", run: function () { makerosOpenModal("/research/nuevo?fragmento=1"); } },
+    { label: "Nueva nota privada", hint: "Acción", run: function () { makerosOpenModal("/notas/nuevo"); } },
+    { label: "Ir al calendario", hint: "Ir a", run: function () { location.href = "/calendario"; } },
+    { label: "Ir a tareas", hint: "Ir a", run: function () { location.href = "/tasks"; } },
+    { label: "Ir a proyectos", hint: "Ir a", run: function () { location.href = "/projects"; } },
+    { label: "Ir a la wiki", hint: "Ir a", run: function () { location.href = "/wiki"; } },
+    { label: "Ir al explorador", hint: "Ir a", run: function () { location.href = "/explorador"; } },
+    { label: "Ir a mis notas", hint: "Ir a", run: function () { location.href = "/notas"; } },
+    { label: "Abrir grafo del laboratorio", hint: "Acción", run: function () { makerosToggleBrain(); } },
+    { label: "Buscar en todo", hint: "Ir a", run: function () { location.href = "/search"; } },
+  ];
+
+  function render(filter) {
+    var q = filter.trim().toLowerCase();
+    items = ACTIONS.filter(function (a) {
+      return !q || a.label.toLowerCase().indexOf(q) !== -1;
+    });
+    if (q && items.length < 12) { /* pages fill in async below */ }
+    active = 0;
+    paint();
+    if (q.length >= 2) {
+      fetch("/search.json?q=" + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          data.results.forEach(function (r) {
+            items.push({
+              label: r.title, hint: "/" + r.path,
+              run: function () { location.href = "/" + r.path; },
+            });
+          });
+          paint();
+        }).catch(function () {});
+    }
+  }
+
+  function paint() {
+    list.innerHTML = "";
+    if (!items.length) {
+      var li = document.createElement("li");
+      li.className = "palette-empty";
+      li.textContent = "Sin resultados";
+      list.appendChild(li);
+      return;
+    }
+    items.forEach(function (a, i) {
+      var li = document.createElement("li");
+      li.className = "palette-item" + (i === active ? " active" : "");
+      li.innerHTML = "";
+      var label = document.createElement("span");
+      label.className = "palette-label"; label.textContent = a.label;
+      var hint = document.createElement("span");
+      hint.className = "palette-hint-item"; hint.textContent = a.hint;
+      li.appendChild(label); li.appendChild(hint);
+      li.onclick = function () { close(); a.run(); };
+      list.appendChild(li);
+    });
+  }
+
+  function open() {
+    if (typeof makerosCloseModal === "function") { makerosCloseModal(); }
+    overlay.hidden = false;
+    input.value = "";
+    render("");
+    setTimeout(function () { input.focus(); }, 30);
+  }
+  function close() { overlay.hidden = true; }
+
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      overlay.hidden ? open() : close();
+      return;
+    }
+    if (overlay.hidden) { return; }
+    if (e.key === "Escape") { close(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, items.length - 1); paint(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(active - 1, 0); paint(); }
+    else if (e.key === "Enter" && items[active]) { e.preventDefault(); var a = items[active]; close(); a.run(); }
+  });
+  input.addEventListener("input", function () { render(input.value); });
+  overlay.addEventListener("click", function (e) { if (e.target === overlay) { close(); } });
+})();
+
+// ---- Grid view: click a column header to sort ----
+document.addEventListener("click", function (e) {
+  var th = e.target.closest ? e.target.closest("th.sortable") : null;
+  if (!th) { return; }
+  var table = th.closest("table.grid-table");
+  if (!table) { return; }
+  var key = th.dataset.sort;
+  var dir = th.classList.contains("sort-asc") ? "desc" : "asc";
+  table.querySelectorAll("th.sortable").forEach(function (h) {
+    h.classList.remove("sort-asc", "sort-desc");
+  });
+  th.classList.add(dir === "asc" ? "sort-asc" : "sort-desc");
+  var tbody = table.querySelector("tbody");
+  var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr[data-indexed_at]"));
+  rows.sort(function (a, b) {
+    var av = a.dataset[key] || "";
+    var bv = b.dataset[key] || "";
+    var cmp = av.localeCompare(bv, "es", { numeric: true });
+    return dir === "asc" ? cmp : -cmp;
+  });
+  rows.forEach(function (r) { tbody.appendChild(r); });
+});
+
+// ---- Whiteboard (pizarra) per page: vanilla canvas, JSON saved next to the .md ----
+(function () {
+  var wrap, canvas, ctx, pageUrl;
+  var elements = [];
+  var tool = "select", color = "#e42c45";
+  var selected = null, dragging = null, drawing = null, saveTimer = null;
+
+  window.makerosToggleBoard = function () {
+    wrap = document.getElementById("board-wrap");
+    if (!wrap) { return; }
+    var blocks = document.querySelector(".blocks");
+    var show = wrap.hidden;
+    wrap.hidden = !show;
+    if (blocks) { blocks.style.display = show ? "none" : ""; }
+    var btn = document.getElementById("board-toggle");
+    if (btn) { btn.classList.toggle("active", show); }
+    if (show) { init(); }
+  };
+
+  function init() {
+    canvas = document.getElementById("board-canvas");
+    if (!canvas || canvas._boardInit) { if (canvas) { resize(); draw(); } return; }
+    canvas._boardInit = true;
+    ctx = canvas.getContext("2d");
+    pageUrl = wrap.dataset.pageUrl;
+    resize();
+    window.addEventListener("resize", resize);
+    fetch(pageUrl + "/pizarra")
+      .then(function (r) { return r.json(); })
+      .then(function (d) { elements = d.elements || []; draw(); })
+      .catch(function () {});
+    bindTools();
+    bindCanvas();
+  }
+
+  function resize() {
+    var r = wrap.getBoundingClientRect();
+    canvas.width = Math.max(r.width - 2, 600);
+    canvas.height = Math.max(window.innerHeight - 220, 400);
+    draw();
+  }
+
+  function bindTools() {
+    wrap.querySelectorAll(".board-tool").forEach(function (b) {
+      b.onclick = function () {
+        tool = b.dataset.tool;
+        wrap.querySelectorAll(".board-tool").forEach(function (x) { x.classList.remove("active"); });
+        b.classList.add("active");
+      };
+    });
+    wrap.querySelectorAll(".board-color").forEach(function (b) {
+      b.onclick = function () {
+        color = b.dataset.color;
+        wrap.querySelectorAll(".board-color").forEach(function (x) { x.classList.remove("active"); });
+        b.classList.add("active");
+      };
+    });
+    document.getElementById("board-delete").onclick = function () { removeSelected(); };
+    document.getElementById("board-clear").onclick = function () {
+      if (confirm("¿Vaciar la pizarra?")) { elements = []; selected = null; draw(); save(); }
+    };
+    document.addEventListener("keydown", function (e) {
+      if (wrap.hidden) { return; }
+      if ((e.key === "Delete" || e.key === "Backspace") && selected &&
+          !e.target.closest("input, textarea")) { removeSelected(); }
+    });
+  }
+
+  function pos(e) {
+    var r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  function bbox(el) {
+    if (el.type === "pencil") {
+      var xs = el.points.map(function (p) { return p[0]; });
+      var ys = el.points.map(function (p) { return p[1]; });
+      return { x1: Math.min.apply(null, xs), y1: Math.min.apply(null, ys),
+               x2: Math.max.apply(null, xs), y2: Math.max.apply(null, ys) };
+    }
+    return { x1: Math.min(el.x1, el.x2), y1: Math.min(el.y1, el.y2),
+             x2: Math.max(el.x1, el.x2), y2: Math.max(el.y1, el.y2) };
+  }
+
+  function hit(el, p) {
+    var b = bbox(el);
+    return p.x >= b.x1 - 4 && p.x <= b.x2 + 4 && p.y >= b.y1 - 4 && p.y <= b.y2 + 4;
+  }
+
+  function bindCanvas() {
+    canvas.addEventListener("mousedown", function (e) {
+      var p = pos(e);
+      if (tool === "select") {
+        selected = null;
+        for (var i = elements.length - 1; i >= 0; i--) {
+          if (hit(elements[i], p)) { selected = elements[i]; break; }
+        }
+        if (selected) { dragging = { dx: p.x - bbox(selected).x1, dy: p.y - bbox(selected).y1, orig: p }; }
+        draw();
+        return;
+      }
+      if (tool === "text") {
+        var t = prompt("Texto:");
+        if (t) { elements.push({ id: "e" + Date.now(), type: "text", x1: p.x, y1: p.y, x2: p.x, y2: p.y, text: t, color: color }); save(); draw(); }
+        return;
+      }
+      drawing = { id: "e" + Date.now(), type: tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: color, points: [[p.x, p.y]] };
+      if (tool === "pencil") { elements.push(drawing); }
+    });
+    canvas.addEventListener("mousemove", function (e) {
+      var p = pos(e);
+      if (dragging && selected) {
+        var b = bbox(selected);
+        var dx = p.x - dragging.orig.x, dy = p.y - dragging.orig.y;
+        moveEl(selected, dx, dy);
+        dragging.orig = p;
+        draw();
+        return;
+      }
+      if (drawing && tool !== "pencil") { drawing.x2 = p.x; drawing.y2 = p.y; draw(); }
+      else if (drawing && tool === "pencil") { drawing.points.push([p.x, p.y]); draw(); }
+    });
+    window.addEventListener("mouseup", function () {
+      if (drawing && tool !== "pencil") { elements.push(drawing); save(); }
+      if (drawing && tool === "pencil") { save(); }
+      drawing = null; dragging = null;
+      draw();
+    });
+  }
+
+  function moveEl(el, dx, dy) {
+    el.x1 += dx; el.x2 += dx; el.y1 += dy; el.y2 += dy;
+    if (el.points) { el.points = el.points.map(function (p) { return [p[0] + dx, p[1] + dy]; }); }
+  }
+
+  function removeSelected() {
+    if (!selected) { return; }
+    elements = elements.filter(function (el) { return el !== selected; });
+    selected = null; draw(); save();
+  }
+
+  function draw() {
+    if (!ctx) { return; }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    elements.forEach(function (el) { drawEl(el, el === selected); });
+    if (drawing && tool !== "pencil") { drawEl(drawing, true); }
+  }
+
+  function drawEl(el, sel) {
+    ctx.strokeStyle = el.color; ctx.fillStyle = el.color;
+    ctx.lineWidth = 2.5;
+    var b = bbox(el);
+    if (el.type === "rect") {
+      ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+    } else if (el.type === "ellipse") {
+      ctx.beginPath();
+      ctx.ellipse((b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2,
+                  Math.max((b.x2 - b.x1) / 2, 1), Math.max((b.y2 - b.y1) / 2, 1), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (el.type === "line") {
+      ctx.beginPath(); ctx.moveTo(el.x1, el.y1); ctx.lineTo(el.x2, el.y2);
+      ctx.stroke();
+      var ang = Math.atan2(el.y2 - el.y1, el.x2 - el.x1);
+      ctx.beginPath();
+      ctx.moveTo(el.x2, el.y2);
+      ctx.lineTo(el.x2 - 12 * Math.cos(ang - 0.4), el.y2 - 12 * Math.sin(ang - 0.4));
+      ctx.moveTo(el.x2, el.y2);
+      ctx.lineTo(el.x2 - 12 * Math.cos(ang + 0.4), el.y2 - 12 * Math.sin(ang + 0.4));
+      ctx.stroke();
+    } else if (el.type === "pencil") {
+      ctx.beginPath();
+      el.points.forEach(function (p, i) { i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); });
+      ctx.stroke();
+    } else if (el.type === "text") {
+      ctx.font = "16px 'Schibsted Grotesk', sans-serif";
+      ctx.fillText(el.text, el.x1, el.y1);
+    }
+    if (sel) {
+      ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.strokeRect(b.x1 - 4, b.y1 - 4, b.x2 - b.x1 + 8, b.y2 - b.y1 + 8);
+      ctx.setLineDash([]);
+    }
+  }
+
+  function save() {
+    var status = document.getElementById("board-status");
+    if (status) { status.textContent = "guardando…"; }
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      fetch(pageUrl + "/pizarra", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ elements: elements }),
+      }).then(function () { if (status) { status.textContent = "guardado"; } })
+        .catch(function () { if (status) { status.textContent = "error al guardar"; } });
+    }, 400);
+  }
+})();
+
+// ---- LM Studio model picker (admin) ----
+window.makerosReloadModels = function () {
+  var sel = document.getElementById("llm-model");
+  var status = document.getElementById("llm-status");
+  if (!sel) { return; }
+  var prev = sel.value;
+  if (status) { status.textContent = "Pidiendo la lista de modelos al servidor…"; }
+  fetch("/admin/llm/modelos")
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      sel.innerHTML = "";
+      (d.models || []).forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m; o.textContent = m;
+        if (m === prev) { o.selected = true; }
+        sel.appendChild(o);
+      });
+      if (prev && !d.models.includes(prev)) {
+        var keep = document.createElement("option");
+        keep.value = prev; keep.textContent = prev + " (guardado)"; keep.selected = true;
+        sel.appendChild(keep);
+      }
+      if (status) {
+        status.textContent = d.error
+          ? d.error
+          : d.models.length + " modelos disponibles. El elegido se carga solo al usarse (LM Studio lo monta on-demand).";
+      }
+    })
+    .catch(function () {
+      if (status) { status.textContent = "No se pudo contactar al servidor."; }
+    });
+};
+
+// ---- Assistant page: model picker (admin) ----
+(function () {
+  var sel = document.getElementById("assistant-model");
+  if (!sel) { return; }
+  sel.addEventListener("change", function () {
+    fetch("/asistente/modelo", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "modelo=" + encodeURIComponent(sel.value),
+    }).then(function () { sel.title = "Modelo: " + sel.value; })
+      .catch(function () {});
+  });
+})();
+window.makerosAssistantReloadModels = function () {
+  var sel = document.getElementById("assistant-model");
+  if (!sel) { return; }
+  var prev = sel.value;
+  fetch("/asistente/modelos")
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      sel.innerHTML = "";
+      (d.models || []).forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m; o.textContent = m;
+        if (m === (prev || d.model)) { o.selected = true; }
+        sel.appendChild(o);
+      });
+    })
+    .catch(function () {});
+};

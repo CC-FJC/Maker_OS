@@ -69,9 +69,25 @@
           {{ icon("bookmark") }}{% if meta.get("pinned") %}Quitar de portada{% else %}Fijar en portada{% endif %}
         </button>
       </form>
+      <form method="post" action="{{ page_url }}/publicar">
+        <button type="submit" class="btn-ghost"
+                title="Publicar en /public/{{ collection_slug }}/{{ page_path }} (solo lectura, sin login)">
+          {{ icon("globe") }}{% if meta.get("public") %}Quitar de público{% else %}Publicar{% endif %}
+        </button>
+      </form>
+      {% if meta.get("public") %}
+      <a class="btn-ghost" href="/public/{{ collection_slug }}/{{ page_path }}"
+         title="Ver la página pública">{{ icon("external-link") }} Ver pública</a>
+      {% endif %}
       {% endif %}
       <a class="btn-ghost" href="/dividir?p={{ page_url[1:] }}"
          title="Abrir esta página en paneles divididos">{{ icon("columns") }} Dividir</a>
+      {% if user and user["role"] != "viewer" %}
+      <button type="button" class="btn-ghost" id="board-toggle"
+              onclick="makerosToggleBoard()"
+              title="Pizarra de la página (se guarda junto al archivo)">
+        {{ icon("pen-tool") }} Pizarra</button>
+      {% endif %}
     </div>
     </div>
     {% if meta.get("tags") or meta.get("pinned") %}
@@ -90,10 +106,74 @@
     {% include "_block.html" %}
   </div>
 
+  {% if user and user["role"] != "viewer" %}
+  <div class="board-wrap" id="board-wrap" hidden data-page-url="{{ page_url }}">
+    <div class="board-tools" role="toolbar" aria-label="Herramientas de la pizarra">
+      <button type="button" class="btn-ghost btn-xs board-tool active" data-tool="select" title="Seleccionar / mover">Seleccionar</button>
+      <button type="button" class="btn-ghost btn-xs board-tool" data-tool="rect" title="Rectángulo">Rectángulo</button>
+      <button type="button" class="btn-ghost btn-xs board-tool" data-tool="ellipse" title="Elipse">Elipse</button>
+      <button type="button" class="btn-ghost btn-xs board-tool" data-tool="line" title="Línea / flecha">Línea</button>
+      <button type="button" class="btn-ghost btn-xs board-tool" data-tool="pencil" title="Dibujo libre">Lápiz</button>
+      <button type="button" class="btn-ghost btn-xs board-tool" data-tool="text" title="Texto">Texto</button>
+      <span class="board-colors">
+        <button type="button" class="board-color active" data-color="#e42c45" style="background:#e42c45"></button>
+        <button type="button" class="board-color" data-color="#29265b" style="background:#29265b"></button>
+        <button type="button" class="board-color" data-color="#f4991f" style="background:#f4991f"></button>
+        <button type="button" class="board-color" data-color="#1f9d55" style="background:#1f9d55"></button>
+        <button type="button" class="board-color" data-color="#2563eb" style="background:#2563eb"></button>
+      </span>
+      <button type="button" class="btn-ghost btn-xs" id="board-delete" title="Borrar elemento seleccionado (Supr)">Borrar</button>
+      <button type="button" class="btn-ghost btn-xs" id="board-clear" title="Vaciar la pizarra">Vaciar</button>
+      <span class="board-status" id="board-status">guardado</span>
+    </div>
+    <canvas id="board-canvas" class="board-canvas"></canvas>
+  </div>
+  {% endif %}
+
   {% if can_edit %}
   <div class="block-add">
     {% include "_add_menu.html" %}
   </div>
+  {% if person %}
+  <section class="page-person">
+    {% if person["projects"] %}
+    <h2>Proyectos</h2>
+    <ul class="item-list">
+      {% for p in person["projects"] %}
+      <li class="item-row">
+        <a class="item-title" href="/{{ p["path"] }}">{{ p["title"] }}</a>
+        {% if p["status"] in status_labels %}<span class="badge st-{{ p["status"] }}">{{ status_labels[p["status"]] }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if person["tasks"] %}
+    <h2>Tareas asignadas</h2>
+    <ul class="item-list">
+      {% for t in person["tasks"] %}
+      <li class="item-row">
+        <a class="item-title" href="/{{ t["path"] }}">{{ t["title"] or t["path"] }}</a>
+        {% if t["status"] in status_labels %}<span class="badge st-{{ t["status"] }}">{{ status_labels[t["status"]] }}</span>{% endif %}
+        {% if t["dates"] %}<span class="item-meta dates{% if t["vencido"] %} vencido{% endif %}">{{ t["dates"] }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endif %}
+  {% if backlinks %}
+  <section class="page-backlinks">
+    <h2>Enlazado desde</h2>
+    <ul class="item-list">
+      {% for b in backlinks %}
+      <li class="item-row">
+        <a class="item-title" href="/{{ b["path"] }}">{{ b["title"] }}</a>
+        <span class="item-meta">{{ collections[b["collection"]]["label"] if b["collection"] in collections else b["collection"] }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
   <footer class="page-actions">
     {% if collection_slug == "wiki" and user and user["role"] != "viewer" %}
     <form class="vault-move-form" method="post" action="{{ page_url }}/mover">
