@@ -1,0 +1,41 @@
+<span data-modal-title hidden>{% if mover %}Mover «{{ mover.rsplit('/', 1)[-1] }}» a…{% else %}Explorar carpetas{% endif %}</span>
+<div class="folder-browser" id="folder-browser">
+  <nav class="folder-crumb" aria-label="Ubicación actual">
+    <button type="button" class="crumb" hx-get="{{ nav_url }}?base={% if mover %}&mover={{ mover }}{% endif %}" hx-target="#folder-browser" hx-swap="outerHTML">{{ icon("home") }} Raíz</button>
+    {% for part in crumb_parts %}
+    <span class="crumb-sep">/</span>
+    <button type="button" class="crumb" hx-get="{{ nav_url }}?base={{ part.path }}{% if mover %}&mover={{ mover }}{% endif %}" hx-target="#folder-browser" hx-swap="outerHTML">{{ part.name }}</button>
+    {% endfor %}
+  </nav>
+
+  <div class="folder-browser-list">
+    {% for f in folders %}
+    <button type="button" class="folder-browser-item"
+            hx-get="{{ nav_url }}?base={{ f.path }}{% if mover %}&mover={{ mover }}{% endif %}" hx-target="#folder-browser" hx-swap="outerHTML">
+      {{ icon("folder") }}<span>{{ f.name }}</span>
+    </button>
+    {% else %}
+    <p class="item-empty">Esta carpeta no tiene subcarpetas.</p>
+    {% endfor %}
+  </div>
+
+  {% if can_edit %}
+  <form class="folder-browser-create" hx-post="{{ create_url }}"
+        hx-target="#folder-browser" hx-swap="outerHTML">
+    <input type="hidden" name="base" value="{{ base }}">
+    {% if mover %}<input type="hidden" name="mover" value="{{ mover }}">{% endif %}
+    <input name="nombre" placeholder="Nombre de la carpeta nueva" required autocomplete="off">
+    <button class="btn-primary" type="submit">Crear aquí</button>
+  </form>
+  {% endif %}
+  <div class="folder-browser-actions">
+    {% if mover %}
+    <form method="post" action="{{ mover_url }}">
+      <input type="hidden" name="nueva_ruta" value="{{ mover_destino }}">
+      <button class="btn-primary" type="submit">{{ icon("folder") }} Mover aquí</button>
+    </form>
+    {% else %}
+    <a class="btn-ghost" href="{{ select_url }}">{{ icon("check") }} Usar esta ubicación</a>
+    {% endif %}
+  </div>
+</div>

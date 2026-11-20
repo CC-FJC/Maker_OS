@@ -185,16 +185,31 @@ document.addEventListener("input", function (event) {
   menu.hidden = !any;
 });
 
-// Pick a block from the slash menu: replace "/" with the block seed.
+// Pick a block from the slash menu or the toolbar under the editor:
+// replace a trailing "/" (or insert at the cursor) with the block seed.
+function makerosInsertBlockSeed(btn) {
+  var form = btn.closest(".block-form");
+  var input = form && form.querySelector("[data-slash-input]");
+  if (!input) return;
+  var seed = JSON.parse(btn.dataset.seed);
+  var v = input.value, pos = input.selectionStart;
+  if (v.slice(0, pos).endsWith("/")) {
+    input.value = v.slice(0, pos - 1) + seed + v.slice(pos);
+    pos = pos - 1 + seed.length;
+  } else {
+    input.value = v.slice(0, pos) + seed + v.slice(pos);
+    pos = pos + seed.length;
+  }
+  var menu = form.querySelector("[data-slash-menu]");
+  if (menu) { menu.hidden = true; }
+  input.focus();
+  input.setSelectionRange(pos, pos);
+}
 document.addEventListener("click", function (event) {
-  var item = event.target.closest ? event.target.closest(".slash-item") : null;
+  var item = event.target.closest ? event.target.closest(".slash-item, .block-type-btn") : null;
   if (!item) return;
   event.preventDefault();
-  var menu = item.closest("[data-slash-menu]");
-  var input = menu.parentElement.querySelector("[data-slash-input]");
-  input.value = JSON.parse(item.dataset.seed);
-  menu.hidden = true;
-  input.focus();
+  makerosInsertBlockSeed(item);
 });
 
 // Esc closes the slash menu; clicking outside closes any open one.
@@ -528,6 +543,12 @@ function makerosKanbanDragBlocked() {
   return false;
 }
 
+// htmx 2.x fires htmx:afterSwap/afterSettle on the NEW swapped node, so
+// e.target is the fresh element; e.detail.target is the old detached one.
+function makerosSwapTarget(e) {
+  return (e.target && e.target.querySelectorAll) ? e.target : e.detail.target;
+}
+
 /* ---------- Obsidian-style live block editing ---------- */
 var makerosBlockFlow = null;  // "next" | "next-new" | "close"
 
@@ -553,7 +574,8 @@ document.addEventListener("input", function (e) {
 
 // Autosize on open (htmx swaps the form in).
 document.addEventListener("htmx:afterSwap", function (e) {
-  var ta = e.detail.target.querySelector && e.detail.target.querySelector(".block-form textarea");
+  var t0 = makerosSwapTarget(e);
+  var ta = t0.querySelector && t0.querySelector(".block-form textarea");
   if (ta) { makerosAutoresize(ta); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
 });
 
@@ -588,10 +610,12 @@ document.addEventListener("keydown", function (e) {
   }
 });
 
-// Leaving the editor saves (buttons inside the form don't count as blur).
+// Leaving the editor saves (any focusable inside the form, incl. the
+// graphical editors' contenteditable cells; controls in the form don't
+// count as leaving).
 document.addEventListener("focusout", function (e) {
   var form = e.target.closest && e.target.closest(".block-form");
-  if (!form || e.target.tagName !== "TEXTAREA") return;
+  if (!form || !form.isConnected) return;
   setTimeout(function () {
     if (form.contains(document.activeElement)) return;
     if (form.dataset.submitting) return;
@@ -622,12 +646,12 @@ document.addEventListener("htmx:afterSwap", function (e) {
   if (mode === "close") return;
 
   if (mode === "next-new") {
-    var blocks = e.detail.target.querySelectorAll(".block");
+    var blocks = makerosSwapTarget(e).querySelectorAll(".block");
     if (blocks.length) makerosOpenEditor(blocks[blocks.length - 1]);
     return;
   }
-  var block = e.detail.target.closest ? (e.detail.target.closest(".block") ||
-               e.detail.target.querySelector(".block")) : null;
+  var t1 = makerosSwapTarget(e);
+  var block = t1.closest ? (t1.closest(".block") || t1.querySelector(".block")) : null;
   if (!block) return;
   var next = block.nextElementSibling;
   while (next && !next.classList.contains("block")) next = next.nextElementSibling;
@@ -1000,7 +1024,9 @@ function makerosInitTableEditor(form) {
   wrap.appendChild(tools);
   wrap.appendChild(tbl);
   ta.style.display = "none";
-  form.insertBefore(wrap, ta);
+  ta.parentNode.insertBefore(wrap, ta);
+  var firstCell = wrap.querySelector("[contenteditable]");
+  if (firstCell) { firstCell.focus(); }
 
   form.addEventListener("submit", function () {
     ta.value = makerosTableToMarkdown(tbl);
@@ -1031,7 +1057,7 @@ function makerosDelCol(tbl, ci) {
 }
 
 document.addEventListener("htmx:afterSwap", function (e) {
-  var t = e.detail.target;
+  var t = makerosSwapTarget(e);
   if (!t || !t.querySelectorAll) { return; }
   var form = t.matches && t.matches('.block-form[data-kind="tabla"]')
     ? t : t.querySelector('.block-form[data-kind="tabla"]');
@@ -1126,7 +1152,9 @@ function makerosInitListEditor(form, kind) {
   wrap.appendChild(tools);
   wrap.appendChild(list);
   ta.style.display = "none";
-  form.insertBefore(wrap, ta);
+  ta.parentNode.insertBefore(wrap, ta);
+  var firstCell = wrap.querySelector("[contenteditable]");
+  if (firstCell) { firstCell.focus(); }
   form.addEventListener("submit", function () {
     ta.value = makerosSerializeRows(
       Array.prototype.slice.call(list.querySelectorAll(".list-editor-row")), kind);
@@ -1163,7 +1191,9 @@ function makerosInitTitleEditor(form) {
   wrap.appendChild(btns);
   wrap.appendChild(t);
   ta.style.display = "none";
-  form.insertBefore(wrap, ta);
+  ta.parentNode.insertBefore(wrap, ta);
+  var firstCell = wrap.querySelector("[contenteditable]");
+  if (firstCell) { firstCell.focus(); }
   form.addEventListener("submit", function () {
     var s = t.textContent.trim();
     ta.value = s ? "#".repeat(level) + " " + s : "";
@@ -1171,7 +1201,7 @@ function makerosInitTitleEditor(form) {
 }
 
 document.addEventListener("htmx:afterSwap", function (e) {
-  var t = e.detail.target;
+  var t = makerosSwapTarget(e);
   if (!t || !t.querySelectorAll) { return; }
   var form = t.matches && t.matches(".block-form") ? t : t.querySelector(".block-form");
   if (!form) { return; }
@@ -1220,7 +1250,7 @@ document.addEventListener("click", function (e) {
 
 // Re-run the graphical editors after settle too (covers every swap path).
 document.addEventListener("htmx:afterSettle", function (e) {
-  var t = e.detail.target;
+  var t = makerosSwapTarget(e);
   if (!t || !t.querySelectorAll) { return; }
   var form = t.matches && t.matches(".block-form") ? t : t.querySelector(".block-form");
   if (!form) { return; }
@@ -1239,10 +1269,10 @@ document.addEventListener("htmx:afterSettle", function (e) {
   var items = [];   // {label, hint, run}
   var active = 0;
   var ACTIONS = [
-    { label: "Nueva tarea", hint: "Acción", run: function () { makerosOpenModal("/tasks/nuevo?fragmento=1"); } },
-    { label: "Nuevo proyecto", hint: "Acción", run: function () { makerosOpenModal("/projects/nuevo?fragmento=1"); } },
-    { label: "Nuevo repositorio", hint: "Acción", run: function () { makerosOpenModal("/research/nuevo?fragmento=1"); } },
-    { label: "Nueva nota privada", hint: "Acción", run: function () { makerosOpenModal("/notas/nuevo"); } },
+    { label: "Nueva tarea", hint: "Acción", run: function () { location.href = "/tasks/nuevo"; } },
+    { label: "Nuevo proyecto", hint: "Acción", run: function () { location.href = "/projects/nuevo"; } },
+    { label: "Nuevo repositorio", hint: "Acción", run: function () { location.href = "/research/nuevo"; } },
+    { label: "Nueva nota privada", hint: "Ir a", run: function () { location.href = "/notas"; } },
     { label: "Ir al calendario", hint: "Ir a", run: function () { location.href = "/calendario"; } },
     { label: "Ir a tareas", hint: "Ir a", run: function () { location.href = "/tasks"; } },
     { label: "Ir a proyectos", hint: "Ir a", run: function () { location.href = "/projects"; } },
@@ -1610,3 +1640,99 @@ window.makerosAssistantReloadModels = function () {
     })
     .catch(function () {});
 };
+
+// ---- Notes grid: a freshly created card edits inline, saves on blur ----
+document.addEventListener("focusout", function (e) {
+  var card = e.target.closest && e.target.closest(".note-card-edit");
+  if (!card || !card.isConnected) return;
+  if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+  var fd = new FormData();
+  ["title", "cuerpo", "tags"].forEach(function (n) {
+    var f = card.querySelector('[name="' + n + '"]');
+    if (f) { fd.append(n, f.value); }
+  });
+  fetch(card.dataset.editUrl, {
+    method: "POST", body: fd, headers: { "HX-Request": "true" },
+  }).then(function (r) { return r.text(); })
+    .then(function (html) { card.outerHTML = html; })
+    .catch(function () {});
+});
+
+
+// ---- Note card toolbar (Keep-style formatting / inserts) ----
+function makerosNoteWrap(ta, before, after, placeholder) {
+  var start = ta.selectionStart, end = ta.selectionEnd;
+  var sel = ta.value.slice(start, end) || placeholder || "";
+  ta.value = ta.value.slice(0, start) + before + sel + after + ta.value.slice(end);
+  ta.focus();
+  ta.setSelectionRange(start + before.length, start + before.length + sel.length);
+}
+function makerosNoteLinePrefix(ta, prefix) {
+  var start = ta.selectionStart;
+  var lineStart = ta.value.lastIndexOf("\n", start - 1) + 1;
+  ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart);
+  ta.focus();
+  ta.setSelectionRange(start + prefix.length, start + prefix.length);
+}
+document.addEventListener("click", function (e) {
+  var btn = e.target.closest && e.target.closest(".note-tool, .note-color");
+  if (!btn) return;
+  var card = btn.closest(".note-card-edit");
+  if (!card) return;
+  var ta = card.querySelector('[name="cuerpo"]');
+  if (!ta) return;
+  if (btn.classList.contains("note-color")) {
+    makerosNoteWrap(ta, "{c:" + btn.dataset.color + "}", "{/c}", "texto");
+    return;
+  }
+  var act = btn.dataset.act;
+  if (act === "h1") makerosNoteLinePrefix(ta, "# ");
+  else if (act === "h2") makerosNoteLinePrefix(ta, "## ");
+  else if (act === "bold") makerosNoteWrap(ta, "**", "**", "texto");
+  else if (act === "italic") makerosNoteWrap(ta, "*", "*", "texto");
+  else if (act === "underline") makerosNoteWrap(ta, "{u}", "{/u}", "texto");
+  else if (act === "strike") makerosNoteWrap(ta, "~~", "~~", "texto");
+  else if (act === "mark") makerosNoteWrap(ta, "==", "==", "texto");
+  else if (act === "link") makerosNoteWrap(ta, "[", "](https://)", "texto");
+  else if (act === "checklist") makerosNoteWrap(ta, "\n- [ ] ", "", "tarea");
+  else if (act === "image") {
+    var fi = card.querySelector("[data-note-image-input]");
+    if (fi) fi.click();
+  }
+});
+document.addEventListener("change", function (e) {
+  var input = e.target.closest && e.target.closest("[data-note-image-input]");
+  if (!input || !input.files || !input.files[0]) return;
+  var card = input.closest(".note-card-edit");
+  if (!card) return;
+  var fd = new FormData();
+  fd.append("archivo", input.files[0]);
+  var uploadUrl = (card.dataset.editUrl || "").replace(/\/editar$/, "/imagenes");
+  fetch(uploadUrl, { method: "POST", body: fd })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var ta = card.querySelector('[name="cuerpo"]');
+      if (ta && data && data.url) makerosNoteWrap(ta, "![", "](" + data.url + ")", data.name || "imagen");
+      input.value = "";
+    })
+    .catch(function () { input.value = ""; });
+});
+
+
+// ---- Card 3-dot menu: clicks inside it must not trigger the card's link ----
+// (submit buttons keep their default so the option forms still POST).
+document.addEventListener("click", function (e) {
+  var menu = e.target.closest && e.target.closest(".card-menu");
+  if (!menu) return;
+  // summary and buttons have their own activation behavior (toggle / submit
+  // / open modal) and don't trigger the card link; plain clicks inside the
+  // menu must not follow the card's <a>.
+  if (e.target.closest("summary, button")) return;
+  e.preventDefault();
+});
+
+// ---- Draft page: "Guardar" only once a title exists ----
+function makerosDraftTitle(input) {
+  var btn = document.getElementById("draft-save");
+  if (btn) { btn.disabled = !input.value.trim(); }
+}

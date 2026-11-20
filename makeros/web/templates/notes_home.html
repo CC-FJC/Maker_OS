@@ -10,17 +10,12 @@
     </h1>
     <div class="header-actions">
       <button type="button" class="btn-primary"
-              onclick="makerosOpenModal('/notas/nuevo{% if folder_path %}?carpeta={{ folder_path }}{% endif %}')">
-        + Nueva nota</button>
-      <details class="icon-picker">
-        <summary>{{ icon("folder-plus") }}<span>Nueva carpeta</span></summary>
-        <form method="post" action="/notas/carpeta" class="icon-grid-form vault-newfolder-form">
-          <label>Ruta de la carpeta (puede anidarse: ideas/proyectos)
-            <input name="ruta" placeholder="carpeta/subcarpeta" required>
-          </label>
-          <button class="btn-primary" type="submit">Crear carpeta</button>
-        </form>
-      </details>
+              hx-post="/notas/nuevo{% if folder_path %}?carpeta={{ folder_path }}{% endif %}"
+              hx-target="#notas-grid" hx-swap="afterbegin"
+              hx-vals='{"carpeta": "{{ folder_path }}"}'>+ Nueva nota</button>
+      <button type="button" class="btn-ghost"
+              onclick="makerosOpenModal('/notas/carpetas-nav{% if folder_path %}?base={{ folder_path }}{% endif %}')">
+        {{ icon("folder-plus") }} Nueva carpeta</button>
     </div>
   </div>
   <p class="page-subtitle">Privadas: solo tú las ves. Viven fuera del repositorio compartido.</p>
@@ -48,45 +43,10 @@
 {% endif %}
 
 <div class="card-grid notes-grid" id="notas-grid">
-  <form class="item-card note-card note-composer" method="post"
-        hx-post="/notas/nuevo{% if folder_path %}?carpeta={{ folder_path }}{% endif %}"
-        hx-target="#notas-grid" hx-swap="outerHTML">
-    <input type="hidden" name="carpeta" value="{{ folder_path }}">
-    <input class="note-composer-title" type="text" name="title" placeholder="Título de la nota"
-           aria-label="Título de la nota" required>
-    <textarea class="note-composer-body" name="cuerpo" rows="4"
-              placeholder="Escribe aquí…  ·  usa «- [ ]» para una checklist  ·  [[pagina]] o [texto](url) para enlaces"
-              aria-label="Contenido de la nota"></textarea>
-    <input class="note-composer-tags" type="text" name="tags" placeholder="etiquetas, separadas, por coma"
-           aria-label="Etiquetas">
-    <div class="note-composer-actions">
-      <button type="submit" class="btn-primary">Guardar nota</button>
-    </div>
-  </form>
   {% for note in scan["notes"] %}
-  <a class="item-card note-card tagged-card" href="/notas/{{ note["path"] }}" data-tags="{{ note["tags"] | join(',') }}">
-    <div class="card-head">
-      <span class="card-icon">{{ icon("file-text", cls="icon icon-lg") }}</span>
-    </div>
-    <span class="card-title">{{ note["title"] }}</span>
-    {% if note["extract"] %}<span class="card-extract">{{ note["extract"] }}</span>{% endif %}
-    {% if note["checklist"] %}
-    <span class="note-checklist">
-      {{ icon("check-square") }} {{ note["checklist"]["done"] }}/{{ note["checklist"]["total"] }}
-      <span class="note-checklist-bar">
-        <span style="width: {{ (100 * note["checklist"]["done"] / note["checklist"]["total"]) | round | int }}%"></span>
-      </span>
-    </span>
-    {% endif %}
-    {% if note["tags"] %}
-    <div class="chip-row">
-      {% for tag in note["tags"] %}<span class="page-tag">{{ tag }}</span>{% endfor %}
-    </div>
-    {% endif %}
-    <span class="card-meta">actualizada {{ note["updated"] }}</span>
-  </a>
+  {% include "_note_card.html" %}
   {% else %}
-  <p class="item-empty">Aún no hay notas aquí. Agrega la primera con el botón «+ Nueva nota» o el formulario de arriba.</p>
+  <p class="item-empty">Aún no hay notas aquí. Pulsa «+ Nueva nota» para crear la primera.</p>
   {% endfor %}
 </div>
 

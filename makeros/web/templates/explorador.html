@@ -106,6 +106,8 @@
         <div class="card-head"><span class="card-icon">{{ icon("file-text", cls="icon icon-lg") }}</span></div>
         <span class="card-title">{{ f["title"] }}</span>
         <span class="card-meta">{{ f["url"][1:] }}</span>
+        {% set item = {"path": f["url"][1:]} %}
+        {% include "_card_menu.html" %}
       </a>
       {% endfor %}
     </div>

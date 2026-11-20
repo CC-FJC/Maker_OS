@@ -1,0 +1,37 @@
+<div class="item-card note-card note-card-edit" data-edit-url="/notas/{{ note_path }}/editar">
+  <div class="card-head">
+    <span class="card-icon">{{ icon("file-text", cls="icon icon-lg") }}</span>
+    <span class="note-edit-hint">Editando — se guarda al salir</span>
+  </div>
+  <input class="note-composer-title" type="text" name="title" value="{{ note_title }}"
+         placeholder="Título de la nota" aria-label="Título de la nota" autofocus>
+  <textarea class="note-composer-body" name="cuerpo" rows="4"
+            placeholder="Escribe aquí…"
+            aria-label="Contenido de la nota">{{ note_body }}</textarea>
+  <div class="note-toolbar" role="toolbar" aria-label="Formato e inserciones">
+    <button type="button" class="note-tool" data-act="h1" title="Título 1">H1</button>
+    <button type="button" class="note-tool" data-act="h2" title="Título 2">H2</button>
+    <span class="note-tool-sep"></span>
+    <button type="button" class="note-tool" data-act="bold" title="Negrita"><b>B</b></button>
+    <button type="button" class="note-tool" data-act="italic" title="Cursiva"><i>I</i></button>
+    <button type="button" class="note-tool" data-act="underline" title="Subrayado"><u>U</u></button>
+    <button type="button" class="note-tool" data-act="strike" title="Tachado"><s>S</s></button>
+    <button type="button" class="note-tool" data-act="mark" title="Resaltado">{{ icon("pen-tool") }}</button>
+    <span class="note-tool-sep"></span>
+    <span class="note-colors">
+      <button type="button" class="note-color" data-color="#e42c45" style="background:#e42c45" title="Rojo"></button>
+      <button type="button" class="note-color" data-color="#f4991f" style="background:#f4991f" title="Naranja"></button>
+      <button type="button" class="note-color" data-color="#1f9d55" style="background:#1f9d55" title="Verde"></button>
+      <button type="button" class="note-color" data-color="#2563eb" style="background:#2563eb" title="Azul"></button>
+      <button type="button" class="note-color" data-color="#29265b" style="background:#29265b" title="Morado"></button>
+    </span>
+    <span class="note-tool-sep"></span>
+    <button type="button" class="note-tool" data-act="link" title="Insertar enlace">{{ icon("link") }}</button>
+    <button type="button" class="note-tool" data-act="checklist" title="Insertar checklist">{{ icon("check-square") }}</button>
+    <button type="button" class="note-tool" data-act="image" title="Insertar imagen">{{ icon("image") }}</button>
+    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-note-image-input>
+  </div>
+  <input class="note-composer-tags" type="text" name="tags"
+         value="{{ note["tags"] | join(', ') }}" placeholder="etiquetas, separadas, por coma"
+         aria-label="Etiquetas">
+</div>

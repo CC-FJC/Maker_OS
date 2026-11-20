@@ -10,10 +10,8 @@
   </div>
   <div class="hero-actions">
     {% if user and user["role"] != "viewer" %}
-    <button type="button" class="btn-hero"
-            onclick="makerosOpenModal('/projects/nuevo?fragmento=1')">Nuevo proyecto</button>
-    <button type="button" class="btn-hero"
-            onclick="makerosOpenModal('/tasks/nuevo?fragmento=1')">Nueva tarea</button>
+    <a class="btn-hero" href="/projects/nuevo">Nuevo proyecto</a>
+    <a class="btn-hero" href="/tasks/nuevo">Nueva tarea</a>
     {% endif %}
   </div>
 </section>

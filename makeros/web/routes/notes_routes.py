@@ -97,11 +97,12 @@ def _scan(settings: Settings, user, base: str = "") -> dict:
     for child in sorted(folder.iterdir(), key=lambda p: p.name.lower()):
         if child.name.startswith(("_", ".")):
             continue
-        rel = f"{base}/{child.name}".strip("/") if base else child.name
         if child.is_dir():
+            rel = f"{base}/{child.name}".strip("/") if base else child.name
             count = sum(1 for _ in child.rglob("*.md"))
             folders.append({"name": child.name, "path": rel, "count": count})
         elif child.suffix == ".md":
+            rel = f"{base}/{child.stem}".strip("/") if base else child.stem
             meta = _note_meta(child)
             meta["path"] = rel
             notes.append(meta)
@@ -156,19 +157,6 @@ async def notes_home(request: Request, conn: ConnDep, user: UserDep):
     )
 
 
-@router.get("/notas/nuevo")
-async def notes_new_form(request: Request, conn: ConnDep, user: UserDep):
-    """Modal fragment: create a note (folder optional, tags optional)."""
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
-    folder = request.query_params.get("carpeta", "").strip().strip("/")
-    return templates.TemplateResponse(
-        request,
-        "_note_form.html",
-        base_ctx(request, conn, user, folder=folder),
-    )
-
-
 @router.post("/notas/nuevo")
 async def notes_create(
     request: Request,
@@ -179,12 +167,12 @@ async def notes_create(
     tags: str = Form(""),
     cuerpo: str = Form(""),
 ):
+    """Create a note card straight away (no modal); the htmx response is
+    the new card already in inline edit mode."""
     if user is None:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
     title = title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="falta el título")
     carpeta = carpeta.strip().strip("/")
     if carpeta and not valid_vault_path(carpeta):
         raise HTTPException(status_code=400, detail="ruta de carpeta no válida")
@@ -193,11 +181,13 @@ async def notes_create(
     if slug in RESERVED:
         slug = f"{slug}-nota"
     parent = _resolve(settings, user, carpeta) if carpeta else _root(settings, user)
+    parent.mkdir(parents=True, exist_ok=True)
     file = parent / f"{slug}.md"
     n = 2
     while file.exists():
         file = parent / f"{slug}-{n}.md"
         n += 1
+    rel = f"{carpeta}/{file.stem}" if carpeta else file.stem
     meta: dict = {"title": title}
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     if tag_list:
@@ -205,10 +195,54 @@ async def notes_create(
     _save(settings, user, file, meta, [cuerpo.strip()])
 
     if request.headers.get("hx-request") == "true":
-        return HTMLResponse(
-            "<script>makerosCloseModal(); window.location.reload();</script>"
+        return templates.TemplateResponse(
+            request,
+            "_note_card_edit.html",
+            base_ctx(
+                request, conn, user,
+                note=_note_meta(file), note_path=rel, folder_path=carpeta,
+                note_title=title, note_body=cuerpo.strip(),
+            ),
         )
     return RedirectResponse(_note_page_url(carpeta), status_code=303)
+
+
+def _notes_browser_ctx(request, conn, user, base: str, mover: str = "") -> dict:
+    base = base.strip().strip("/")
+    if base and not valid_vault_path(base):
+        raise HTTPException(status_code=400, detail="ruta de carpeta no válida")
+    mover = mover.strip().strip("/")
+    if mover and not valid_vault_path(mover):
+        raise HTTPException(status_code=400, detail="ruta no válida")
+    leaf = mover.rsplit("/", 1)[-1] if mover else ""
+    destino = f"{base}/{leaf}".strip("/") if mover else ""
+    parts = []
+    acc = ""
+    for part in base.split("/") if base else []:
+        acc = f"{acc}/{part}".strip("/")
+        parts.append({"name": part, "path": acc})
+    scan = _scan(get_settings(request), user, base)
+    return base_ctx(
+        request, conn, user,
+        folders=scan["folders"], base=base, crumb_parts=parts,
+        create_url="/notas/carpeta", nav_url="/notas/carpetas-nav",
+        select_url=f"/notas/{base}" if base else "/notas",
+        can_edit=True,
+        mover=mover, mover_url=f"/notas/{mover}/mover" if mover else "",
+        mover_destino=destino,
+    )
+
+
+@router.get("/notas/carpetas-nav")
+async def notes_carpetas_nav(request: Request, conn: ConnDep, user: UserDep):
+    """Folder browser fragment for the private notes vault (modal)."""
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    base = request.query_params.get("base", "")
+    mover = request.query_params.get("mover", "")
+    return templates.TemplateResponse(
+        request, "_folder_browser.html", _notes_browser_ctx(request, conn, user, base, mover)
+    )
 
 
 @router.post("/notas/carpeta")
@@ -217,15 +251,24 @@ async def notes_create_folder(
     conn: ConnDep,
     user: UserDep,
     ruta: str = Form(""),
+    base: str = Form(""),
+    nombre: str = Form(""),
+    mover: str = Form(""),
 ):
     if user is None:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
+    if not ruta and nombre:
+        ruta = f"{base.strip().strip('/')}/{nombre}".strip("/")
     ruta = ruta.strip().strip("/")
     if not valid_vault_path(ruta):
         raise HTTPException(status_code=400, detail="nombre de carpeta no válido")
     _folder = _resolve(settings, user, ruta)
     _folder.mkdir(parents=True, exist_ok=True)
+    if request.headers.get("HX-Request") == "true":
+        return templates.TemplateResponse(
+            request, "_folder_browser.html", _notes_browser_ctx(request, conn, user, ruta, mover)
+        )
     return RedirectResponse(f"/notas/{ruta}", status_code=303)
 
 
@@ -492,7 +535,100 @@ async def notes_add_block(
     return RedirectResponse(_note_page_url(path), status_code=303)
 
 
+
+
 # ---------- note / folder view (registered last: catch-all) ----------
+
+@router.post("/notas/{path:path}/editar")
+async def notes_card_save(
+    request: Request,
+    conn: ConnDep,
+    user: UserDep,
+    path: str,
+    title: str = Form(""),
+    cuerpo: str = Form(""),
+    tags: str = Form(""),
+):
+    """Inline card edit from the notes grid: save, or discard if left empty."""
+    if user is None:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file = _note_file(settings, user, path)
+    title = title.strip()
+    cuerpo = cuerpo.strip()
+    if not title and not cuerpo:
+        file.unlink()
+        return HTMLResponse("")
+    meta, _body = frontmatter.read(file)
+    meta["title"] = title or file.stem.replace("-", " ")
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    if tag_list:
+        meta["tags"] = tag_list
+    else:
+        meta.pop("tags", None)
+    _save(settings, user, file, meta, [cuerpo] if cuerpo else [])
+    return templates.TemplateResponse(
+        request,
+        "_note_card.html",
+        base_ctx(request, conn, user, note=_note_meta(file), note_path=path),
+    )
+
+
+
+
+@router.post("/notas/{path:path}/duplicar")
+async def notes_duplicate(path: str, request: Request, conn: ConnDep, user: UserDep):
+    """Duplicate a note as '<nombre>-copia'."""
+    if user is None:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file = _note_file(settings, user, path)
+    meta, body = frontmatter.read(file)
+    parent = file.parent
+    stem = file.stem
+    candidate = parent / f"{stem}-copia.md"
+    n = 2
+    while candidate.exists():
+        candidate = parent / f"{stem}-copia-{n}.md"
+        n += 1
+    meta = dict(meta)
+    meta["title"] = f"{meta.get('title') or stem} (copia)"
+    _save(settings, user, candidate, meta, [body])
+    rel = candidate.with_suffix("").relative_to(_root(settings, user)).as_posix()
+    return RedirectResponse(_note_page_url(rel), status_code=303)
+
+
+@router.post("/notas/{path:path}/mover")
+async def notes_move(
+    path: str, request: Request, conn: ConnDep, user: UserDep,
+    nueva_ruta: str = Form(""),
+):
+    """Move a note inside the private vault."""
+    if user is None:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file = _note_file(settings, user, path)
+    nueva = nueva_ruta.strip().strip("/")
+    if not valid_vault_path(nueva):
+        raise HTTPException(status_code=400, detail="ruta no válida")
+    dest = _resolve(settings, user, nueva).with_suffix(".md")
+    if dest.exists():
+        raise HTTPException(status_code=400, detail="ya existe una nota en esa ruta")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    file.rename(dest)
+    rel = dest.with_suffix("").relative_to(_root(settings, user)).as_posix()
+    return RedirectResponse(f"/notas/{rel}", status_code=303)
+
+
+@router.post("/notas/{path:path}/borrar")
+async def notes_delete(path: str, request: Request, conn: ConnDep, user: UserDep):
+    if user is None:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file = _note_file(settings, user, path)
+    file.unlink()
+    return RedirectResponse("/notas", status_code=303)
+
 
 @router.get("/notas/{path:path}")
 async def notes_view(path: str, request: Request, conn: ConnDep, user: UserDep):

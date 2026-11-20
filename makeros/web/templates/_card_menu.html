@@ -1,0 +1,32 @@
+{% if user and user["role"] != "viewer" %}
+{% set _parts = item["path"].split("/") %}
+{% set _coll = _parts[0] %}
+{% set _page = _parts[1:] | join("/") %}
+<details class="card-menu">
+  <summary title="Opciones de la página" aria-label="Opciones de la página">{{ icon("more-vertical") }}</summary>
+  <div class="card-menu-panel">
+    <div class="menu-grid">
+      <form method="post" action="/{{ _coll }}/{{ _page }}/duplicar">
+        <button type="submit" class="menu-grid-item" title="Duplicar página">{{ icon("copy") }}<span>Duplicar</span></button>
+      </form>
+      {% if _coll in ("wiki", "research", "inventory") %}
+      <button type="button" class="menu-grid-item" title="Mover a otra carpeta"
+              onclick="makerosOpenModal('/{{ _coll }}/carpetas-nav?mover={{ _page }}')">
+        {{ icon("folder") }}<span>Mover…</span>
+      </button>
+      {% endif %}
+      <form method="post" action="/{{ _coll }}/{{ _page }}/fijar">
+        <button type="submit" class="menu-grid-item" title="Mostrar u ocultar en la portada">
+          {{ icon("bookmark") }}<span>{% if item.get("pinned") %}Desfijar{% else %}Fijar{% endif %}</span>
+        </button>
+      </form>
+      <form method="post" action="/{{ _coll }}/{{ _page }}/borrar"
+            onsubmit="return confirm('¿Eliminar esta página completa?');">
+        <button type="submit" class="menu-grid-item menu-danger" title="Eliminar página">
+          {{ icon("trash-2") }}<span>Eliminar</span>
+        </button>
+      </form>
+    </div>
+  </div>
+</details>
+{% endif %}

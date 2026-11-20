@@ -7,39 +7,42 @@
       {{ icon("more-vertical") }}
     </summary>
     <div class="block-menu-panel">
-      <button class="menu-item" title="Editar bloque"
-              hx-get="{{ page_url }}/bloques/{{ b["i"] }}/editar"
-              hx-target="#block-{{ b["i"] }}" hx-swap="outerHTML">
-        {{ icon("edit-2") }}<span>Editar</span>
-      </button>
-      <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/duplicar">
-        <button type="submit" class="menu-item">{{ icon("copy") }}<span>Duplicar</span></button>
-      </form>
-      <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/mover">
-        <input type="hidden" name="hacia" value="arriba">
-        <button type="submit" class="menu-item">{{ icon("arrow-up") }}<span>Mover arriba</span></button>
-      </form>
-      <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/mover">
-        <input type="hidden" name="hacia" value="abajo">
-        <button type="submit" class="menu-item">{{ icon("arrow-down") }}<span>Mover abajo</span></button>
-      </form>
+      <p class="menu-label">Bloque</p>
+      <div class="menu-grid">
+        <button class="menu-grid-item" title="Editar bloque"
+                hx-get="{{ page_url }}/bloques/{{ b["i"] }}/editar"
+                hx-target="#block-{{ b["i"] }}" hx-swap="outerHTML">
+          {{ icon("edit-2") }}<span>Editar</span>
+        </button>
+        <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/duplicar">
+          <button type="submit" class="menu-grid-item" title="Duplicar">{{ icon("copy") }}<span>Duplicar</span></button>
+        </form>
+        <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/mover">
+          <input type="hidden" name="hacia" value="arriba">
+          <button type="submit" class="menu-grid-item" title="Mover arriba">{{ icon("arrow-up") }}<span>Subir</span></button>
+        </form>
+        <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/mover">
+          <input type="hidden" name="hacia" value="abajo">
+          <button type="submit" class="menu-grid-item" title="Mover abajo">{{ icon("arrow-down") }}<span>Bajar</span></button>
+        </form>
+        <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/borrar"
+              onsubmit="return confirm('¿Eliminar este bloque?');">
+          <button type="submit" class="menu-grid-item menu-danger" title="Eliminar">{{ icon("trash-2") }}<span>Eliminar</span></button>
+        </form>
+      </div>
       <p class="menu-label">Añadir debajo</p>
-      {% for tipo, label in block_types.items() %}
-      <form hx-post="{{ page_url }}/bloques/nuevo"
-            hx-target="#block-{{ b["i"] }}" hx-swap="afterend">
-        <input type="hidden" name="despues" value="{{ b["i"] }}">
-        <input type="hidden" name="tipo" value="{{ tipo }}">
-        <button type="submit" class="menu-item menu-add">
-          {{ icon(block_icons[tipo]) }}<span>{{ label }}</span>
-        </button>
-      </form>
-      {% endfor %}
-      <form method="post" action="{{ page_url }}/bloques/{{ b["i"] }}/borrar"
-            onsubmit="return confirm('¿Eliminar este bloque?');">
-        <button type="submit" class="menu-item menu-danger">
-          {{ icon("trash-2") }}<span>Eliminar</span>
-        </button>
-      </form>
+      <div class="menu-grid">
+        {% for tipo, label in block_types.items() %}
+        <form hx-post="{{ page_url }}/bloques/nuevo"
+              hx-target="#block-{{ b["i"] }}" hx-swap="afterend">
+          <input type="hidden" name="despues" value="{{ b["i"] }}">
+          <input type="hidden" name="tipo" value="{{ tipo }}">
+          <button type="submit" class="menu-grid-item menu-add" title="Añadir {{ label }} debajo">
+            {{ icon(block_icons[tipo]) }}<span>{{ label }}</span>
+          </button>
+        </form>
+        {% endfor %}
+      </div>
     </div>
   </details>
   {% endif %}

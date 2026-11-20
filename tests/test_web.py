@@ -943,16 +943,29 @@ def test_card_slider_is_stepped(logged_in_client: TestClient, settings):
 # ---------- Typed creation forms ----------
 
 def test_project_form_fields_and_creation(logged_in_client: TestClient, settings):
-    form = logged_in_client.get("/projects/nuevo")
-    assert "Nombre del proyecto" in form.text
-    assert "Vencimiento" in form.text
-    assert 'name="banner_file"' in form.text
-    assert "<option value=\"active\">En proceso</option>" in form.text
+    # New flow: GET nuevo opens the empty draft page; it is only saved
+    # (file + index) once it gets a title via /nuevo/guardar.
+    draft = logged_in_client.get("/projects/nuevo")
+    assert 'id="draft-title"' in draft.text
+    assert "Guardar" in draft.text
+    saved = logged_in_client.post(
+        "/projects/nuevo/guardar", data={"title": "Feria del Libro"},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+    assert saved.headers["location"] == "/projects/feria-del-libro/project"
+    from makeros import frontmatter
 
+    meta, _body = frontmatter.read(
+        settings.content_dir / "projects" / "feria-del-libro" / "project.md"
+    )
+    assert meta["title"] == "Feria del Libro"
+
+    # Typed-field creation is still accepted by POST /nuevo directly.
     response = logged_in_client.post(
         "/projects/nuevo",
         data={
-            "title": "Feria del Libro",
+            "title": "Feria del Libro II",
             "status": "active",
             "lead": "jacob",
             "start": "2026-10-19",
@@ -965,9 +978,9 @@ def test_project_form_fields_and_creation(logged_in_client: TestClient, settings
     from makeros import frontmatter
 
     meta, body = frontmatter.read(
-        settings.content_dir / "projects" / "feria-del-libro" / "project.md"
+        settings.content_dir / "projects" / "feria-del-libro-ii" / "project.md"
     )
-    assert meta["title"] == "Feria del Libro"
+    assert meta["title"] == "Feria del Libro II"
     assert meta["status"] == "active"
     assert meta["lead"] == "jacob"
     assert meta["start"] == "2026-10-19"
@@ -993,8 +1006,8 @@ def test_project_create_with_banner_upload(logged_in_client: TestClient, setting
 
 
 def test_research_and_task_forms(logged_in_client: TestClient, settings):
-    form = logged_in_client.get("/research/nuevo")
-    assert "Tipo" in form.text and "URL" in form.text
+    draft = logged_in_client.get("/research/nuevo")
+    assert 'id="draft-title"' in draft.text
 
     response = logged_in_client.post(
         "/research/nuevo",
@@ -1022,9 +1035,8 @@ def test_research_and_task_forms(logged_in_client: TestClient, settings):
 
 
 def test_inventory_form_fields_and_creation(logged_in_client: TestClient, settings):
-    form = logged_in_client.get("/inventory/nuevo")
-    assert "Número de serie" in form.text
-    assert "Fuera de servicio" in form.text
+    draft = logged_in_client.get("/inventory/nuevo")
+    assert 'id="draft-title"' in draft.text
 
     logged_in_client.post(
         "/inventory/nuevo",
@@ -1749,9 +1761,17 @@ def test_adding_text_block_renders_in_place(logged_in_client, settings):
         headers={"HX-Request": "true"},
     )
     assert response.status_code == 200
-    # Non-image blocks land rendered, not in edit mode.
-    assert "bloques/nuevo" in response.text  # block menu present
+    # New blocks open straight in the editor (Notion-style).
+    assert "block-form" in response.text
     assert 'id="block-' in response.text
+    # The divisor is the only block that lands rendered.
+    div = logged_in_client.post(
+        "/wiki/texto/bloques/nuevo",
+        data={"tipo": "divisor", "despues": "0"},
+        headers={"HX-Request": "true"},
+    )
+    assert "bloques/nuevo" in div.text  # block menu present
+    assert "block-form" not in div.text
 
 
 def test_resize_image_block_endpoint(logged_in_client, settings):
@@ -1808,8 +1828,24 @@ def test_vault_folder_creation_and_navigation(logged_in_client, settings):
         "/wiki/carpeta", data={"ruta": "guias/impresion"}, follow_redirects=False
     )
     assert created.status_code == 303
-    assert created.headers["location"] == "/wiki/guias/impresion"
+    assert created.headers["location"] == "/wiki?carpeta=guias/impresion"
     assert (settings.content_dir / "wiki" / "guias" / "impresion").is_dir()
+
+    # Folder browser fragment (modal) + create-in-place via the browser.
+    nav = logged_in_client.get("/wiki/carpetas-nav")
+    assert nav.status_code == 200 and "folder-browser" in nav.text
+    created_hx = logged_in_client.post(
+        "/wiki/carpeta",
+        data={"base": "guias", "nombre": "diseno"},
+        headers={"HX-Request": "true"},
+    )
+    assert created_hx.status_code == 200 and "folder-browser" in created_hx.text
+    assert (settings.content_dir / "wiki" / "guias" / "diseno").is_dir()
+    nav2 = logged_in_client.get("/wiki/carpetas-nav?base=guias")
+    assert 'base=guias/diseno' in nav2.text  # nested folder listed
+    # Research (repos) shares the same browser.
+    nav_research = logged_in_client.get("/research/carpetas-nav")
+    assert nav_research.status_code == 200 and "folder-browser" in nav_research.text
 
     folder = logged_in_client.get("/wiki/guias/impresion", follow_redirects=False)
     # A folder URL redirects to the scoped card view.
@@ -1822,6 +1858,59 @@ def test_vault_folder_creation_and_navigation(logged_in_client, settings):
 
     bad = logged_in_client.post("/wiki/carpeta", data={"ruta": "../mal"})
     assert bad.status_code == 400
+
+
+def test_card_menu_and_page_org_actions(logged_in_client, settings):
+    from makeros import frontmatter
+
+    _write(settings.content_dir / "wiki" / "inicio.md", {"title": "Inicio"}, "Hola.")
+    _write(settings.content_dir / "research" / "klipper.md", {"title": "Klipper"}, "Repo.")
+    _reindex(settings)
+
+    # Cards carry the 3-dot options menu.
+    page = logged_in_client.get("/wiki")
+    assert "card-menu" in page.text and "more-vertical" in page.text
+    assert "/wiki/inicio/duplicar" in page.text
+    assert "carpetas-nav?mover=inicio" in page.text
+    page = logged_in_client.get("/research")
+    assert "carpetas-nav?mover=klipper" in page.text
+
+    # Duplicate a page.
+    r = logged_in_client.post("/wiki/inicio/duplicar", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/wiki/inicio-copia"
+    meta, _ = frontmatter.read(settings.content_dir / "wiki" / "inicio-copia.md")
+    assert meta["title"] == "Inicio (copia)"
+
+    # Move via the folder browser flow (generic collection route).
+    (settings.content_dir / "wiki" / "guias").mkdir(exist_ok=True)
+    r = logged_in_client.post(
+        "/research/klipper/mover", data={"nueva_ruta": "guias/klipper"}, follow_redirects=False
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/research/guias/klipper"
+    assert (settings.content_dir / "research" / "guias" / "klipper.md").is_file()
+
+    # Folder browser in "mover" mode offers the move action.
+    nav = logged_in_client.get("/wiki/carpetas-nav?mover=inicio")
+    assert "Mover aquí" in nav.text
+    assert 'name="nueva_ruta" value="inicio"' in nav.text
+    nav2 = logged_in_client.get("/wiki/carpetas-nav?mover=inicio&base=guias")
+    assert 'name="nueva_ruta" value="guias/inicio"' in nav2.text
+
+    # Notes card menu + note-level duplicate/move/delete.
+    logged_in_client.post("/notas/nuevo", data={"title": "Nota A", "cuerpo": "x"})
+    home = logged_in_client.get("/notas")
+    assert "card-menu" in home.text and "/notas/nota-a/duplicar" in home.text
+    r = logged_in_client.post("/notas/nota-a/duplicar", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/notas/nota-a-copia"
+    assert (settings.private_dir / "jacob" / "nota-a-copia.md").is_file()
+    r = logged_in_client.post(
+        "/notas/nota-a/mover", data={"nueva_ruta": "ideas/nota-a"}, follow_redirects=False
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/notas/ideas/nota-a"
+    assert (settings.private_dir / "jacob" / "ideas" / "nota-a.md").is_file()
+    r = logged_in_client.post("/notas/nota-a-copia/borrar", follow_redirects=False)
+    assert r.status_code == 303
+    assert not (settings.private_dir / "jacob" / "nota-a-copia.md").exists()
 
 
 def test_create_wiki_page_inside_folder(logged_in_client, settings):
@@ -1998,10 +2087,12 @@ def test_sidebar_hides_people_and_shows_assistant(logged_in_client: TestClient):
 def test_assignment_forms_list_people(logged_in_client: TestClient, settings):
     _write(settings.content_dir / "people" / "ana.md", {"title": "Ana"}, "Skills.")
     _reindex(settings)
+    # Tasks/projects open as an empty draft page; the calendar keeps its
+    # typed event form with the people picker.
     tasks = logged_in_client.get("/tasks/nuevo")
-    assert '<option value="ana">Ana</option>' in tasks.text
+    assert 'id="draft-title"' in tasks.text
     project = logged_in_client.get("/projects/nuevo")
-    assert '<option value="ana">Ana</option>' in project.text
+    assert 'id="draft-title"' in project.text
     event_form = logged_in_client.get("/calendario/nuevo")
     assert '<option value="ana">Ana</option>' in event_form.text
 
@@ -2055,11 +2146,64 @@ def test_cards_are_default_for_tasks_and_kanban_saved(logged_in_client: TestClie
 
 
 def test_new_form_fragment_renders_for_modal(logged_in_client: TestClient):
-    response = logged_in_client.get("/tasks/nuevo?fragmento=1")
+    # Calendar events keep the modal fragment form; markdown collections
+    # open a full draft page instead.
+    response = logged_in_client.get("/calendario/nuevo?fragmento=1")
     assert response.status_code == 200
     assert "<!doctype" not in response.text
-    assert 'hx-post="/tasks/nuevo"' in response.text
+    assert 'hx-post="/calendario/nuevo"' in response.text
     assert 'data-modal-title' in response.text
+    draft = logged_in_client.get("/tasks/nuevo?fragmento=1")
+    assert 'id="draft-title"' in draft.text
+
+
+def test_draft_page_saves_only_with_title(logged_in_client, settings):
+    from makeros import frontmatter
+    from makeros.db import connect
+    from makeros.indexer import search_documents
+
+    # Opening the draft creates no content file and indexes nothing.
+    draft = logged_in_client.get("/wiki/nuevo")
+    assert draft.status_code == 200
+    assert 'id="draft-title"' in draft.text
+    assert not (settings.content_dir / "wiki" / "nuevo.md").exists()
+    conn = connect(settings.db_path)
+    assert search_documents(conn, "borrador") == []
+    conn.close()
+
+    # Blocks can be added to the draft; they live in private/, not content/.
+    response = logged_in_client.post(
+        "/wiki/nuevo/bloques/nuevo",
+        data={"tipo": "tabla", "despues": "-1"},
+        headers={"HX-Request": "true"},
+    )
+    assert response.status_code == 200
+    assert "block-form" in response.text  # opens straight in the table editor
+    draft_files = list((settings.private_dir / "drafts").glob("*.md"))
+    assert len(draft_files) == 1
+    _meta, body = frontmatter.read(draft_files[0])
+    assert "| Columna 1" in body
+    conn = connect(settings.db_path)
+    assert search_documents(conn, "Columna") == []  # drafts stay out of the DB
+    conn.close()
+
+    # Giving it a title creates the real page and removes the draft.
+    saved = logged_in_client.post(
+        "/wiki/nuevo/guardar", data={"title": "Mi borrador"}, follow_redirects=False
+    )
+    assert saved.status_code == 303
+    assert saved.headers["location"] == "/wiki/mi-borrador"
+    meta, body = frontmatter.read(settings.content_dir / "wiki" / "mi-borrador.md")
+    assert meta["title"] == "Mi borrador"
+    assert "| Columna 1" in body
+    assert not draft_files[0].exists()
+    conn = connect(settings.db_path)
+    assert [d["path"] for d in search_documents(conn, "Columna")] == ["wiki/mi-borrador"]
+    conn.close()
+
+    # Empty title is rejected.
+    bad = logged_in_client.post("/wiki/nuevo/guardar", data={"title": "  "})
+    assert bad.status_code == 400
 
 
 def test_modal_create_task_via_htmx(logged_in_client: TestClient, settings):
@@ -2153,8 +2297,28 @@ def test_private_notes_vault(logged_in_client: TestClient, settings):
     home = logged_in_client.get("/notas")
     assert home.status_code == 200
     assert "Mis notas" in home.text
+    assert "note-composer" not in home.text  # no placeholder composer card
 
-    # Create a note with tags inside a folder, via the modal endpoint.
+    # Notes created at the vault root link without the .md extension.
+    logged_in_client.post("/notas/nuevo", data={"title": "Suelta", "cuerpo": "x"})
+    home = logged_in_client.get("/notas")
+    assert 'href="/notas/suelta"' in home.text
+    assert "/notas/suelta.md" not in home.text
+    note_page = logged_in_client.get("/notas/suelta")
+    assert note_page.status_code == 200
+
+    # Folder browser for the private vault.
+    nav = logged_in_client.get("/notas/carpetas-nav")
+    assert nav.status_code == 200 and "folder-browser" in nav.text
+    created_hx = logged_in_client.post(
+        "/notas/carpeta", data={"base": "", "nombre": "ideas"},
+        headers={"HX-Request": "true"},
+    )
+    assert created_hx.status_code == 200 and "folder-browser" in created_hx.text
+    assert (settings.private_dir / "jacob" / "ideas").is_dir()
+
+    # Create a note with tags inside a folder: the htmx response is the
+    # new card already in inline edit mode (no modal).
     created = logged_in_client.post(
         "/notas/nuevo",
         data={"title": "Idea de sensor", "carpeta": "ideas", "tags": "pcb, sensor",
@@ -2162,8 +2326,34 @@ def test_private_notes_vault(logged_in_client: TestClient, settings):
         headers={"HX-Request": "true"},
     )
     assert created.status_code == 200
+    assert "note-card-edit" in created.text
+    assert 'data-edit-url="/notas/ideas/idea-de-sensor/editar"' in created.text
     file = settings.private_dir / "jacob" / "ideas" / "idea-de-sensor.md"
     assert file.is_file()
+
+    # Inline card edit saves title/body/tags; empty card is discarded.
+    edited = logged_in_client.post(
+        "/notas/ideas/idea-de-sensor/editar",
+        data={"title": "Idea de sensor v2", "cuerpo": "Texto nuevo.", "tags": "pcb"},
+        headers={"HX-Request": "true"},
+    )
+    assert edited.status_code == 200 and "note-card" in edited.text
+    meta, body = frontmatter.read(file)
+    assert meta["title"] == "Idea de sensor v2" and meta["tags"] == ["pcb"]
+    assert body.strip() == "Texto nuevo."
+    discarded = logged_in_client.post(
+        "/notas/ideas/idea-de-sensor/editar",
+        data={"title": "", "cuerpo": "", "tags": ""},
+        headers={"HX-Request": "true"},
+    )
+    assert discarded.status_code == 200 and discarded.text == ""
+    assert not file.exists()
+    # recreate for the rest of the test
+    logged_in_client.post(
+        "/notas/nuevo",
+        data={"title": "Idea de sensor", "carpeta": "ideas", "tags": "pcb, sensor",
+              "cuerpo": "Probar el sensor en la protoboard."},
+    )
 
     # The folder shows on the vault home; the note card carries its tags.
     home = logged_in_client.get("/notas")

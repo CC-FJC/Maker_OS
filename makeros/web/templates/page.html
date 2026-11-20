@@ -2,7 +2,7 @@
 {% block title %}MakerOS — {{ title }}{% endblock %}
 {% block content %}
 <article class="notion-page">
-  {% if meta.get("banner") or can_edit %}
+  {% if not draft and (meta.get("banner") or can_edit) %}
   <div class="page-banner"{% if meta.get("banner") %} style="background-image: url('{{ meta["banner"] }}')"{% endif %}>
     {% if not meta.get("banner") %}<span class="page-banner-empty">Sin portada todavía</span>{% endif %}
     {% if can_edit %}
@@ -33,7 +33,17 @@
   </div>
   {% endif %}
   <header class="page-header">
-    <p class="breadcrumb"><a href="/{{ collection_slug }}">{{ collection_label }}</a> / {{ title }}</p>
+    <p class="breadcrumb"><a href="/{{ collection_slug }}">{{ collection_label }}</a> / {% if draft %}Nueva página{% else %}{{ title }}{% endif %}</p>
+    {% if draft %}
+    <form class="draft-title-form" method="post" action="{{ page_url }}/guardar">
+      <input type="text" name="title" id="draft-title" class="draft-title-input"
+             placeholder="Título de la página…" autocomplete="off" autofocus
+             oninput="makerosDraftTitle(this)">
+      {% if draft_ruta %}<input type="hidden" name="ruta" value="{{ draft_ruta }}">{% endif %}
+      <button type="submit" class="btn-primary" id="draft-save" disabled>Guardar</button>
+    </form>
+    <p class="page-subtitle">La página se crea en cuanto le pongas un título; mientras tanto es un borrador privado.</p>
+    {% else %}
     <div class="page-header-row">
     <h1 class="page-title-with-icon">
       {% if can_edit %}
@@ -62,6 +72,7 @@
       {% endif %}
       <span>{{ title }}</span>
     </h1>
+    {% if not draft %}
     <div class="header-actions page-header-actions">
       {% if user and user["role"] != "viewer" %}
       <form method="post" action="{{ page_url }}/fijar">
@@ -69,16 +80,6 @@
           {{ icon("bookmark") }}{% if meta.get("pinned") %}Quitar de portada{% else %}Fijar en portada{% endif %}
         </button>
       </form>
-      <form method="post" action="{{ page_url }}/publicar">
-        <button type="submit" class="btn-ghost"
-                title="Publicar en /public/{{ collection_slug }}/{{ page_path }} (solo lectura, sin login)">
-          {{ icon("globe") }}{% if meta.get("public") %}Quitar de público{% else %}Publicar{% endif %}
-        </button>
-      </form>
-      {% if meta.get("public") %}
-      <a class="btn-ghost" href="/public/{{ collection_slug }}/{{ page_path }}"
-         title="Ver la página pública">{{ icon("external-link") }} Ver pública</a>
-      {% endif %}
       {% endif %}
       <a class="btn-ghost" href="/dividir?p={{ page_url[1:] }}"
          title="Abrir esta página en paneles divididos">{{ icon("columns") }} Dividir</a>
@@ -89,7 +90,9 @@
         {{ icon("pen-tool") }} Pizarra</button>
       {% endif %}
     </div>
+    {% endif %}
     </div>
+    {% endif %}
     {% if meta.get("tags") or meta.get("pinned") %}
     <div class="page-tags">
       {% for tag in meta.get("tags", []) %}
@@ -106,7 +109,7 @@
     {% include "_block.html" %}
   </div>
 
-  {% if user and user["role"] != "viewer" %}
+  {% if not draft and user and user["role"] != "viewer" %}
   <div class="board-wrap" id="board-wrap" hidden data-page-url="{{ page_url }}">
     <div class="board-tools" role="toolbar" aria-label="Herramientas de la pizarra">
       <button type="button" class="btn-ghost btn-xs board-tool active" data-tool="select" title="Seleccionar / mover">Seleccionar</button>
@@ -175,18 +178,22 @@
   </section>
   {% endif %}
   <footer class="page-actions">
-    {% if collection_slug == "wiki" and user and user["role"] != "viewer" %}
-    <form class="vault-move-form" method="post" action="{{ page_url }}/mover">
-      <label>Mover a otra ruta del vault
-        <input name="nueva_ruta" value="{{ page_path }}" required>
-      </label>
-      <button type="submit" class="btn-ghost">Mover página</button>
+    {% if draft %}
+    <form method="post" action="{{ page_url }}/borrar"
+          onsubmit="return confirm('¿Descartar este borrador?');">
+      <button type="submit" class="btn-danger-ghost">Descartar borrador</button>
     </form>
+    {% else %}
+    {% if collection_slug in ("wiki", "research", "inventory") and user and user["role"] != "viewer" %}
+    <button type="button" class="btn-ghost"
+            onclick="makerosOpenModal('/{{ collection_slug }}/carpetas-nav?mover={{ page_path }}')">
+      {{ icon("folder") }} Mover a otra carpeta…</button>
     {% endif %}
     <form method="post" action="{{ page_url }}/borrar"
           onsubmit="return confirm('¿Eliminar esta página completa?');">
       <button type="submit" class="btn-danger-ghost">Eliminar página</button>
     </form>
+    {% endif %}
   </footer>
   {% endif %}
 </article>

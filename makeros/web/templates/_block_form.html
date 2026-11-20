@@ -9,7 +9,7 @@
         <p class="slash-hint">Bloques — escribe para filtrar, Esc para cerrar</p>
         {% for tipo, label in block_types.items() %}
         <button type="button" class="slash-item" data-tipo="{{ tipo }}"
-                data-seed="{{ block_seeds[tipo] | tojson }}">
+                data-seed='{{ block_seeds[tipo] | tojson }}' title="{{ label }}">
           {{ icon(block_icons.get(tipo), cls="icon") }}<span>{{ label }}</span>
         </button>
         {% endfor %}
@@ -31,6 +31,14 @@
     {% endif %}
     <div class="block-form-actions">
       <span class="block-form-hint">Enter guarda · Mayús+Enter salto de línea · / inserta bloques · Esc cierra</span>
+      <span class="block-type-bar" role="toolbar" aria-label="Insertar bloque">
+        {% for tipo, label in block_types.items() %}
+        <button type="button" class="block-type-btn" data-tipo="{{ tipo }}"
+                data-seed='{{ block_seeds[tipo] | tojson }}' title="Insertar {{ label }}">
+          {{ icon(block_icons.get(tipo)) }}
+        </button>
+        {% endfor %}
+      </span>
       <button type="submit" class="btn-ghost">Guardar</button>
       <button type="button" class="btn-ghost"
               hx-get="{{ page_url }}/bloques/{{ i }}"

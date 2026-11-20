@@ -36,15 +36,9 @@
       <a class="btn-ghost" href="/asistente" title="Preguntar a la documentación">{{ icon("cpu") }} Asistente</a>
       <a class="btn-ghost" href="/wiki/grafos" title="Ver el grafo de conexiones">{{ icon("share-2") }} Grafo</a>
       {% if can_edit %}
-      <details class="icon-picker">
-        <summary>{{ icon("folder-plus") }}<span>Nueva carpeta</span></summary>
-        <form method="post" action="/wiki/carpeta" class="icon-grid-form vault-newfolder-form">
-          <label>Ruta de la carpeta (puede anidarse: guias/impresion)
-            <input name="ruta" placeholder="carpeta/subcarpeta" required>
-          </label>
-          <button class="btn-primary" type="submit">Crear carpeta</button>
-        </form>
-      </details>
+      <button type="button" class="btn-ghost"
+              onclick="makerosOpenModal('/wiki/carpetas-nav{% if folder_path %}?base={{ folder_path }}{% endif %}')">
+        {{ icon("folder-plus") }} Nueva carpeta</button>
       <a class="btn-primary" href="/wiki/nuevo{% if folder_path %}?ruta={{ folder_path }}{% endif %}">
         + Nueva página</a>
       {% endif %}

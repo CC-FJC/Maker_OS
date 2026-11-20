@@ -1,0 +1,43 @@
+<a class="item-card note-card tagged-card" href="/notas/{{ note["path"] }}" data-tags="{{ note["tags"] | join(',') }}">
+  <div class="card-head">
+    <span class="card-icon">{{ icon("file-text", cls="icon icon-lg") }}</span>
+  </div>
+  <span class="card-title">{{ note["title"] }}</span>
+  {% if note["extract"] %}<span class="card-extract">{{ note["extract"] }}</span>{% endif %}
+  {% if note["checklist"] %}
+  <span class="note-checklist">
+    {{ icon("check-square") }} {{ note["checklist"]["done"] }}/{{ note["checklist"]["total"] }}
+    <span class="note-checklist-bar">
+      <span style="width: {{ (100 * note["checklist"]["done"] / note["checklist"]["total"]) | round | int }}%"></span>
+    </span>
+  </span>
+  {% endif %}
+  {% if note["tags"] %}
+  <div class="chip-row">
+    {% for tag in note["tags"] %}<span class="page-tag">{{ tag }}</span>{% endfor %}
+  </div>
+  {% endif %}
+  <span class="card-meta">actualizada {{ note["updated"] }}</span>
+  {% if user and user["role"] != "viewer" %}
+  <details class="card-menu">
+    <summary title="Opciones de la nota" aria-label="Opciones de la nota">{{ icon("more-vertical") }}</summary>
+    <div class="card-menu-panel">
+      <div class="menu-grid">
+        <form method="post" action="/notas/{{ note["path"] }}/duplicar">
+          <button type="submit" class="menu-grid-item" title="Duplicar nota">{{ icon("copy") }}<span>Duplicar</span></button>
+        </form>
+        <button type="button" class="menu-grid-item" title="Mover a otra carpeta"
+                onclick="makerosOpenModal('/notas/carpetas-nav?mover={{ note["path"] }}')">
+          {{ icon("folder") }}<span>Mover…</span>
+        </button>
+        <form method="post" action="/notas/{{ note["path"] }}/borrar"
+              onsubmit="return confirm('¿Eliminar esta nota?');">
+          <button type="submit" class="menu-grid-item menu-danger" title="Eliminar nota">
+            {{ icon("trash-2") }}<span>Eliminar</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </details>
+  {% endif %}
+</a>

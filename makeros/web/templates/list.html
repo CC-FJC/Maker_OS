@@ -34,24 +34,17 @@
       {% if collection_slug == "wiki" %}
       <a class="btn-ghost" href="/wiki/grafos" title="Ver el grafo de conexiones">{{ icon("git-branch") }} Grafo</a>
       {% endif %}
-      {% if collection_slug == "wiki" and user and user["role"] != "viewer" %}
-      <details class="icon-picker">
-        <summary>{{ icon("folder-plus") }}<span>Nueva carpeta</span></summary>
-        <form method="post" action="/wiki/carpeta" class="icon-grid-form vault-newfolder-form">
-          <label>Ruta de la carpeta (puede anidarse: guias/impresion)
-            <input name="ruta" placeholder="carpeta/subcarpeta" required>
-          </label>
-          <button class="btn-primary" type="submit">Crear carpeta</button>
-        </form>
-      </details>
+      {% if collection_slug in ("wiki", "research", "inventory") and user and user["role"] != "viewer" %}
+      <button type="button" class="btn-ghost"
+              onclick="makerosOpenModal('/{{ collection_slug }}/carpetas-nav{% if carpeta %}?base={{ carpeta }}{% endif %}')">
+        {{ icon("folder-plus") }} Nueva carpeta</button>
       {% endif %}
       {% if user and user["role"] == "admin" %}
       <a class="btn-ghost" href="/{{ collection_slug }}/plantilla"
          title="Editar el contenido con el que se crean las páginas nuevas de {{ collection_label }}">Plantilla</a>
       {% endif %}
       {% if user and user["role"] != "viewer" %}
-      <button type="button" class="btn-primary"
-              onclick="makerosOpenModal('/{{ collection_slug }}/nuevo?fragmento=1{% if carpeta %}&ruta={{ carpeta }}{% endif %}')">+ Añadir</button>
+      <a class="btn-primary" href="/{{ collection_slug }}/nuevo{% if carpeta %}?ruta={{ carpeta }}{% endif %}">+ Añadir</a>
       {% endif %}
     </div>
   </div>

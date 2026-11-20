@@ -59,6 +59,9 @@ EDIT_ROLES = ("admin", "member")
 VIEWS = ("lista", "tarjetas", "kanban", "arbol", "grid", "galeria", "timeline")
 # Collections whose index page has the folder system (cards + tag filter).
 FOLDER_COLLECTIONS = ("wiki", "research", "inventory")
+# Markdown collections: "nuevo" opens an empty draft page that is only
+# saved (file + search index) once the user gives it a title.
+DRAFT_COLLECTIONS = ("wiki", "avisos", "projects", "tasks", "research", "inventory", "exhibits")
 
 
 def _collection_or_404(collection: str) -> dict[str, str]:
@@ -68,16 +71,40 @@ def _collection_or_404(collection: str) -> dict[str, str]:
     return info
 
 
-def _resolve_page(settings, collection: str, page_path: str) -> tuple[Path, str]:
+def _draft_file(settings, collection: str, username: str) -> Path:
+    """Per-user, per-collection draft file (private/, never indexed)."""
+    drafts = settings.private_dir / "drafts"
+    drafts.mkdir(parents=True, exist_ok=True)
+    file = drafts / f"{_slugify(username)}--{_slugify(collection)}.md"
+    if not file.exists():
+        frontmatter.write(file, {}, "")
+    return file
+
+
+def _resolve_page(
+    settings, collection: str, page_path: str, username: str | None = None
+) -> tuple[Path, str]:
     """Resolve a URL to a content file, blocking traversal. Returns (file, doc_id)."""
     if ".." in page_path or page_path.startswith("/") or page_path.endswith("/"):
         raise HTTPException(status_code=404)
+    if page_path == "nuevo" and username and collection in DRAFT_COLLECTIONS:
+        return _draft_file(settings, collection, username), ""
     file = settings.content_dir / collection / (page_path + ".md")
     try:
         resolved = file.resolve().relative_to(settings.content_dir.resolve())
     except ValueError:
         raise HTTPException(status_code=404) from None
     return file, str(resolved.with_suffix(""))
+
+
+def _user_name(user) -> str | None:
+    return user["username"] if user else None
+
+
+def _index_page(conn, settings, file: Path) -> None:
+    """Index a page unless it is a private draft (drafts stay out of the DB)."""
+    if settings.private_dir not in file.resolve().parents:
+        index_file(conn, settings.content_dir, file)
 
 
 def _slugify(text: str) -> str:
@@ -221,7 +248,7 @@ async def set_banner(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
 
     if archivo is not None and archivo.filename:
         ext = Path(archivo.filename).suffix.lower().lstrip(".")
@@ -243,7 +270,7 @@ async def set_banner(
         raise HTTPException(status_code=400, detail="Sube un archivo o pega una URL")
 
     frontmatter.write(file, meta, body)
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
     return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
 
 
@@ -259,14 +286,14 @@ async def delete_banner(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     banner = meta.pop("banner", None)
     if banner and banner.startswith("/media/"):
         target = safe_upload_path(settings, banner[len("/media/"):])
         if target is not None and target.is_file():
             target.unlink()
     frontmatter.write(file, meta, body)
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
     return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
 
 
@@ -465,6 +492,37 @@ async def new_page_form(collection: str, request: Request, conn: ConnDep, user: 
         return RedirectResponse("/login", status_code=303)
     if user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    # Markdown collections: open the empty page right away (Notion-style
+    # draft). The page is only written to content/ + index when it gets a
+    # title (POST /{collection}/nuevo/guardar).
+    if collection in DRAFT_COLLECTIONS:
+        ruta = request.query_params.get("ruta", "").strip().strip("/")
+        file = _draft_file(settings, collection, user["username"])
+        _meta, body = frontmatter.read(file)
+        blocks = [
+            {"i": b.index, "kind": b.kind, "html": render_markdown(b.text)}
+            for b in split_blocks(body)
+        ]
+        return templates.TemplateResponse(
+            request,
+            "page.html",
+            base_ctx(
+                request,
+                conn,
+                user,
+                collection_slug=collection,
+                collection_label=info["label"],
+                page_path="nuevo",
+                page_url=f"/{collection}/nuevo",
+                title="",
+                meta={},
+                blocks=blocks,
+                can_edit=True,
+                draft=True,
+                draft_ruta=ruta if ruta and vault.valid_vault_path(ruta) else "",
+            ),
+        )
     # Prefills: day-click for calendar events, folder for wiki pages.
     fecha = request.query_params.get("fecha", "")
     defaults = {"start": f"{fecha}T09:00"} if fecha and collection == "calendario" else {}
@@ -485,6 +543,62 @@ async def new_page_form(collection: str, request: Request, conn: ConnDep, user: 
         # Modal fragment: just the form, for the global popup.
         return templates.TemplateResponse(request, "_new_form.html", ctx)
     return templates.TemplateResponse(request, "page_new.html", ctx)
+
+
+@router.post("/{collection}/nuevo/guardar")
+async def save_draft(
+    collection: str,
+    request: Request,
+    conn: ConnDep,
+    user: UserDep,
+    title: str = Form(""),
+    ruta: str = Form(""),
+):
+    """Give the draft page a title: it becomes a real, indexed page."""
+    info = _collection_or_404(collection)
+    settings = get_settings(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    if collection not in DRAFT_COLLECTIONS:
+        raise HTTPException(status_code=404)
+    title = title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="El título es obligatorio")
+
+    draft = _draft_file(settings, collection, user["username"])
+    _dmeta, draft_body = frontmatter.read(draft)
+
+    meta, seed_body = _template_seed(settings, info["template"])
+    if "title" in meta:
+        meta["title"] = title
+    if "name" in meta:
+        meta["name"] = title
+    if "title" not in meta and "name" not in meta:
+        meta["title"] = title
+
+    page_path = _slugify(title)
+    if collection == "projects":
+        page_path = f"{page_path}/project"
+    ruta = ruta.strip().strip("/")
+    if ruta:
+        if not vault.valid_vault_path(ruta):
+            raise HTTPException(status_code=400, detail="ruta de carpeta no válida")
+        page_path = f"{ruta}/{page_path}"
+
+    candidate = page_path
+    n = 2
+    file, _doc_id = _resolve_page(settings, collection, candidate)
+    while file.exists():
+        candidate = f"{page_path}-{n}"
+        n += 1
+        file, _doc_id = _resolve_page(settings, collection, candidate)
+
+    frontmatter.write(file, meta, draft_body.strip() or seed_body)
+    _index_page(conn, settings, file)
+    draft.unlink(missing_ok=True)
+    return RedirectResponse(f"/{collection}/{candidate}", status_code=303)
 
 
 @router.post("/{collection}/nuevo")
@@ -638,7 +752,7 @@ async def _create_page_body(
     _apply_banner_form(form, settings, meta, page_path.rsplit("/", 1)[0])
 
     frontmatter.write(file, meta, body or seed_body)
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
     if collection == "calendario":
         # New event: push it to Google in the background right away.
         schedule_sync(settings, force=True)
@@ -667,8 +781,10 @@ def _apply_banner_form(form, settings, meta: dict, stem: str) -> None:
         meta["banner"] = url
 
 
-def _load_for_edit(settings, collection: str, page_path: str) -> tuple[Path, dict, str]:
-    file, _doc_id = _resolve_page(settings, collection, page_path)
+def _load_for_edit(
+    settings, collection: str, page_path: str, username: str | None = None
+) -> tuple[Path, dict, str]:
+    file, _doc_id = _resolve_page(settings, collection, page_path, username)
     if not file.is_file():
         raise HTTPException(status_code=404)
     meta, body = frontmatter.read(file)
@@ -677,7 +793,7 @@ def _load_for_edit(settings, collection: str, page_path: str) -> tuple[Path, dic
 
 def _save_blocks(conn, settings, file: Path, meta: dict, texts: list[str]) -> None:
     frontmatter.write(file, meta, join_blocks(texts))
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
 
 
 def _block_partial(request, user, page_url: str, index: int, text: str):
@@ -704,7 +820,7 @@ async def get_board(
     if user is None:
         return RedirectResponse("/login", status_code=303)
     settings = get_settings(request)
-    file, _ = _resolve_page(settings, collection, page_path)
+    file, _ = _resolve_page(settings, collection, page_path, _user_name(user))
     if not file.is_file():
         raise HTTPException(status_code=404)
     board_file = file.with_suffix(".pizarra.json")
@@ -720,7 +836,7 @@ async def save_board(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, _ = _resolve_page(settings, collection, page_path)
+    file, _ = _resolve_page(settings, collection, page_path, _user_name(user))
     if not file.is_file():
         raise HTTPException(status_code=404)
     data = await request.json()
@@ -744,7 +860,7 @@ async def get_block(
     if user is None:
         return RedirectResponse("/login", status_code=303)
     settings = get_settings(request)
-    _file, _meta, body = _load_for_edit(settings, collection, page_path)
+    _file, _meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -806,7 +922,7 @@ async def edit_block_form(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    _file, _meta, body = _load_for_edit(settings, collection, page_path)
+    _file, _meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -836,7 +952,7 @@ async def save_block(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -866,7 +982,7 @@ async def toggle_block_check(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -892,7 +1008,7 @@ async def reorder_blocks(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     try:
         order = [int(x) for x in orden.split(",") if x.strip()]
@@ -917,7 +1033,7 @@ async def delete_block(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -943,7 +1059,7 @@ async def resize_image_block(
     if tamano not in named and not (tamano.isdigit() and 5 <= int(tamano) <= 100):
         raise HTTPException(status_code=400, detail="tamaño no válido")
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -976,7 +1092,7 @@ async def add_block(
     if tipo not in BLOCK_SEEDS:
         raise HTTPException(status_code=400)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if despues < -1 or despues >= len(blocks):
         raise HTTPException(status_code=404)
@@ -987,9 +1103,9 @@ async def add_block(
     _save_blocks(conn, settings, file, meta, texts)
 
     if request.headers.get("HX-Request") == "true":
-        # Image blocks open the editor immediately (upload menu ready);
-        # every other type lands rendered, ready to edit on demand.
-        if tipo == "imagen":
+        # New blocks open straight in the editor (image upload menu, table
+        # grid, checklist rows…); only the divisor lands rendered.
+        if tipo != "divisor":
             return templates.TemplateResponse(
                 request,
                 "_block_form.html",
@@ -1019,7 +1135,7 @@ async def duplicate_block(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -1044,7 +1160,7 @@ async def move_block(
     if hacia not in ("arriba", "abajo"):
         raise HTTPException(status_code=400)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     blocks = split_blocks(body)
     if not _valid_index(blocks, block_index):
         raise HTTPException(status_code=404)
@@ -1073,10 +1189,10 @@ async def set_status(
     if estado not in STATUS_LABELS:
         raise HTTPException(status_code=400, detail="Estado desconocido")
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     meta["status"] = estado
     frontmatter.write(file, meta, body)
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
     return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
 
 
@@ -1147,13 +1263,13 @@ async def set_icon(
     if icon and not is_valid_icon(icon):
         raise HTTPException(status_code=400)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     if icon:
         meta["icon"] = icon
     else:
         meta.pop("icon", None)
     frontmatter.write(file, meta, body)
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
     return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
 
 
@@ -1168,7 +1284,7 @@ async def delete_page(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, doc_id = _resolve_page(settings, collection, page_path)
+    file, doc_id = _resolve_page(settings, collection, page_path, _user_name(user))
     if not file.is_file():
         raise HTTPException(status_code=404)
     file.unlink()
@@ -1255,21 +1371,88 @@ async def wiki_graph_data(conn: ConnDep, user: UserDep):
     return JSONResponse(vault.graph_data(conn))
 
 
-@router.post("/wiki/carpeta")
-async def wiki_create_folder(
+def _folder_browser_ctx(request, conn, user, collection: str, base: str, create_url: str,
+                        nav_url: str, select_url: str, can_edit: bool,
+                        mover: str = "") -> dict:
+    settings = get_settings(request)
+    base = base.strip().strip("/")
+    if base and not vault.valid_vault_path(base):
+        raise HTTPException(status_code=400, detail="ruta de carpeta no válida")
+    mover = mover.strip().strip("/")
+    if mover and not vault.valid_vault_path(mover):
+        raise HTTPException(status_code=400, detail="ruta no válida")
+    leaf = mover.rsplit("/", 1)[-1] if mover else ""
+    destino = f"{base}/{leaf}".strip("/") if mover else ""
+    parts = []
+    acc = ""
+    for part in base.split("/") if base else []:
+        acc = f"{acc}/{part}".strip("/")
+        parts.append({"name": part, "path": acc})
+    return base_ctx(
+        request, conn, user,
+        folders=vault.list_folders(settings, collection, base),
+        base=base, crumb_parts=parts,
+        create_url=create_url, nav_url=nav_url, select_url=select_url,
+        can_edit=can_edit,
+        mover=mover, mover_url=f"/{collection}/{mover}/mover" if mover else "",
+        mover_destino=destino,
+    )
+
+
+@router.get("/{collection}/carpetas-nav")
+async def carpetas_nav(collection: str, request: Request, conn: ConnDep, user: UserDep):
+    """Folder browser fragment (modal): navigate, pick or create folders."""
+    _collection_or_404(collection)
+    if collection not in FOLDER_COLLECTIONS:
+        raise HTTPException(status_code=404)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    base = request.query_params.get("base", "")
+    mover = request.query_params.get("mover", "")
+    ctx = _folder_browser_ctx(
+        request, conn, user, collection, base,
+        create_url=f"/{collection}/carpeta", nav_url=f"/{collection}/carpetas-nav",
+        select_url=f"/{collection}?carpeta={base}" if base else f"/{collection}",
+        can_edit=user["role"] in EDIT_ROLES,
+        mover=mover,
+    )
+    return templates.TemplateResponse(request, "_folder_browser.html", ctx)
+
+
+@router.post("/{collection}/carpeta")
+async def create_folder(
+    collection: str,
     request: Request,
     conn: ConnDep,
     user: UserDep,
-    ruta: Annotated[str, Form()],
+    ruta: Annotated[str, Form()] = "",
+    base: Annotated[str, Form()] = "",
+    nombre: Annotated[str, Form()] = "",
+    mover: Annotated[str, Form()] = "",
 ):
-    """Create a folder (nested allowed) inside the wiki vault."""
+    """Create a folder (nested allowed) inside a folder-collection vault."""
+    _collection_or_404(collection)
+    if collection not in FOLDER_COLLECTIONS:
+        raise HTTPException(status_code=404)
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
+    if not ruta and nombre:
+        ruta = f"{base.strip().strip('/')}/{nombre}".strip("/")
     ruta = ruta.strip().strip("/")
     if not vault.valid_vault_path(ruta):
         raise HTTPException(status_code=400, detail="nombre de carpeta no válido")
-    vault.create_folder(get_settings(request), ruta)
-    return RedirectResponse(f"/wiki/{ruta}", status_code=303)
+    settings = get_settings(request)
+    vault.create_folder(settings, ruta, collection)
+    if request.headers.get("HX-Request") == "true":
+        ctx = _folder_browser_ctx(
+            request, conn, user, collection, ruta,
+            create_url=f"/{collection}/carpeta", nav_url=f"/{collection}/carpetas-nav",
+            select_url=f"/{collection}?carpeta={ruta}",
+            can_edit=True,
+            mover=mover,
+        )
+        return templates.TemplateResponse(request, "_folder_browser.html", ctx)
+    return RedirectResponse(f"/{collection}?carpeta={ruta}", status_code=303)
 
 
 @router.post("/wiki/carpeta/{folder_path:path}/mover")
@@ -1300,29 +1483,71 @@ async def wiki_move_folder(
     return RedirectResponse(f"/wiki/{nueva}", status_code=303)
 
 
-@router.post("/wiki/{page_path:path}/mover")
-async def wiki_move_page(
+@router.post("/{collection}/{page_path:path}/mover")
+async def move_page(
+    collection: str,
     page_path: str,
     request: Request,
     conn: ConnDep,
     user: UserDep,
     nueva_ruta: Annotated[str, Form()],
 ):
-    """Move/rename a wiki page; incoming [[links]] are rewritten."""
+    """Move/rename a page inside a folder collection; [[links]] rewritten."""
+    _collection_or_404(collection)
+    if collection not in FOLDER_COLLECTIONS:
+        raise HTTPException(status_code=404)
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, _doc_id = _resolve_page(settings, "wiki", page_path)
+    file, _doc_id = _resolve_page(settings, collection, page_path, _user_name(user))
     if not file.is_file():
         raise HTTPException(status_code=404)
     nueva = nueva_ruta.strip().strip("/")
     if not vault.valid_vault_path(nueva):
         raise HTTPException(status_code=400, detail="ruta no válida")
-    target = settings.content_dir / "wiki" / f"{nueva}.md"
+    target = settings.content_dir / collection / f"{nueva}.md"
     if target.exists():
         raise HTTPException(status_code=400, detail="ya existe una página en esa ruta")
-    vault.move_page(conn, settings, f"wiki/{page_path}", f"wiki/{nueva}")
-    return RedirectResponse(f"/wiki/{nueva}", status_code=303)
+    vault.move_page(conn, settings, f"{collection}/{page_path}", f"{collection}/{nueva}")
+    return RedirectResponse(f"/{collection}/{nueva}", status_code=303)
+
+
+@router.post("/{collection}/{page_path:path}/duplicar")
+async def duplicate_page(
+    collection: str,
+    page_path: str,
+    request: Request,
+    conn: ConnDep,
+    user: UserDep,
+):
+    """Duplicate a whole page (file + index entry) as '<ruta>-copia'."""
+    _collection_or_404(collection)
+    if user is None or user["role"] not in EDIT_ROLES:
+        raise HTTPException(status_code=403)
+    settings = get_settings(request)
+    file, _doc_id = _resolve_page(settings, collection, page_path, _user_name(user))
+    if not file.is_file():
+        raise HTTPException(status_code=404)
+    meta, body = frontmatter.read(file)
+    if collection == "projects" and "/" in page_path:
+        parent, leaf = page_path.rsplit("/", 1)
+        new_path = f"{parent}-copia/{leaf}"
+    else:
+        new_path = f"{page_path}-copia"
+    candidate, n = new_path, 2
+    target, _ = _resolve_page(settings, collection, candidate)
+    while target.exists():
+        candidate = f"{new_path}-{n}"
+        n += 1
+        target, _ = _resolve_page(settings, collection, candidate)
+    meta = dict(meta)
+    base_title = str(meta.get("title") or meta.get("name") or page_path.rsplit("/", 1)[-1])
+    meta["title"] = f"{base_title} (copia)"
+    meta.pop("pinned", None)
+    meta.pop("public", None)
+    frontmatter.write(target, meta, body)
+    _index_page(conn, settings, target)
+    return RedirectResponse(f"/{collection}/{candidate}", status_code=303)
 
 
 @router.get("/tasks/{page_path:path}/editar")
@@ -1337,7 +1562,7 @@ async def task_edit_form(
         return RedirectResponse("/login", status_code=303)
     if user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
-    file, meta, _body = _load_for_edit(get_settings(request), "tasks", page_path)
+    file, meta, _body = _load_for_edit(get_settings(request), "tasks", page_path, _user_name(user))
     return templates.TemplateResponse(
         request,
         "_task_edit.html",
@@ -1361,7 +1586,7 @@ async def task_edit_save(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, "tasks", page_path)
+    file, meta, body = _load_for_edit(settings, "tasks", page_path, _user_name(user))
     form = await request.form()
     modal = request.headers.get("hx-request") == "true"
 
@@ -1404,68 +1629,10 @@ async def task_edit_save(
         del meta["due"]
 
     frontmatter.write(file, meta, body)
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
     if modal:
         return _modal_done()
     return RedirectResponse(f"/tasks/{page_path}", status_code=303)
-
-
-@router.post("/{collection}/{page_path:path}/publicar")
-async def toggle_public(
-    collection: str,
-    page_path: str,
-    request: Request,
-    conn: ConnDep,
-    user: UserDep,
-):
-    """Publish/unpublish a page: public pages render without login at
-    /public/<collection>/<page> (read-only)."""
-    _collection_or_404(collection)
-    if user is None or user["role"] not in EDIT_ROLES:
-        raise HTTPException(status_code=403)
-    settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
-    meta["public"] = not meta.get("public")
-    frontmatter.write(file, meta, body)
-    index_file(conn, settings.content_dir, file)
-    return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
-
-
-@router.get("/public/{collection}/{page_path:path}")
-async def public_page(collection: str, page_path: str, request: Request, conn: ConnDep):
-    """Read-only public view of a page whose frontmatter has public: true."""
-    info = _collection_or_404(collection)
-    settings = get_settings(request)
-    file, _doc_id = _resolve_page(settings, collection, page_path)
-    if not file.is_file():
-        raise HTTPException(status_code=404)
-    meta, body = frontmatter.read(file)
-    if not meta.get("public"):
-        raise HTTPException(status_code=404)
-    blocks = [
-        {"i": b.index, "kind": b.kind, "html": render_markdown(b.text)}
-        for b in split_blocks(body)
-    ]
-    title = str(meta.get("title") or meta.get("name") or page_path.rsplit("/", 1)[-1])
-    return templates.TemplateResponse(
-        request,
-        "page.html",
-        base_ctx(
-            request,
-            conn,
-            None,  # anonymous
-            collection_slug=collection,
-            collection_label=info["label"],
-            page_path=page_path,
-            page_url=f"/public/{collection}/{page_path}",
-            title=title,
-            meta=meta,
-            blocks=blocks,
-            can_edit=False,
-            backlinks=[],
-            person=None,
-        ),
-    )
 
 
 @router.post("/{collection}/{page_path:path}/fijar")
@@ -1481,10 +1648,10 @@ async def toggle_pin(
     if user is None or user["role"] not in EDIT_ROLES:
         raise HTTPException(status_code=403)
     settings = get_settings(request)
-    file, meta, body = _load_for_edit(settings, collection, page_path)
+    file, meta, body = _load_for_edit(settings, collection, page_path, _user_name(user))
     meta["pinned"] = not meta.get("pinned")
     frontmatter.write(file, meta, body)
-    index_file(conn, settings.content_dir, file)
+    _index_page(conn, settings, file)
     return RedirectResponse(f"/{collection}/{page_path}", status_code=303)
 
 
@@ -1500,7 +1667,7 @@ def _vault_response(request, conn, user, info, base: str):
             collection_label=info["label"],
             tree=vault.build_tree(conn, base),
             folder_path=base,
-            is_folder=vault.is_folder(settings, base),
+            is_folder=vault.is_folder(settings, base, "wiki"),
         ),
     )
 
@@ -1517,11 +1684,11 @@ async def page_view(
     if user is None:
         return RedirectResponse("/login", status_code=303)
     settings = get_settings(request)
-    file, _doc_id = _resolve_page(settings, collection, page_path)
+    file, _doc_id = _resolve_page(settings, collection, page_path, _user_name(user))
     if not file.is_file():
         # A folder of any collection (e.g. /wiki/guias) opens its scoped
         # card view; /wiki/<folder> just redirects there.
-        if collection in FOLDER_COLLECTIONS and vault.is_folder(settings, page_path):
+        if collection in FOLDER_COLLECTIONS and vault.is_folder(settings, page_path, collection):
             return RedirectResponse(
                 f"/{collection}?carpeta={page_path}", status_code=303
             )

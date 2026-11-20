@@ -67,15 +67,31 @@ def build_tree(conn: sqlite3.Connection, base: str = "") -> Folder:
     return root
 
 
-def is_folder(settings, path: str) -> bool:
+def is_folder(settings, path: str, collection: str = "wiki") -> bool:
     """True if the vault path is an existing directory."""
-    target = (settings.content_dir / "wiki" / path).resolve()
-    root = (settings.content_dir / "wiki").resolve()
+    target = (settings.content_dir / collection / path).resolve()
+    root = (settings.content_dir / collection).resolve()
     return root in target.parents and target.is_dir()
 
 
-def create_folder(settings, path: str) -> None:
-    (settings.content_dir / "wiki" / path).mkdir(parents=True, exist_ok=True)
+def create_folder(settings, path: str, collection: str = "wiki") -> None:
+    (settings.content_dir / collection / path).mkdir(parents=True, exist_ok=True)
+
+
+def list_folders(settings, collection: str, base: str = "") -> list[dict]:
+    """Immediate subfolders of `base` inside a collection vault."""
+    root = (settings.content_dir / collection).resolve()
+    target = (root / base).resolve()
+    if target != root and root not in target.parents:
+        return []
+    if not target.is_dir():
+        return []
+    out = []
+    for child in sorted(target.iterdir(), key=lambda p: p.name.lower()):
+        if child.is_dir() and not child.name.startswith(("_", ".")):
+            rel = f"{base}/{child.name}".strip("/") if base else child.name
+            out.append({"name": child.name, "path": rel})
+    return out
 
 
 def move_page(
@@ -93,8 +109,8 @@ def move_page(
     index_file(conn, settings.content_dir, new_file)
 
     # Rewrite incoming wikilinks: [[old]], [[old|label]], [[old.md]].
-    old_rel = old_path[len("wiki/"):]
-    new_rel = new_path[len("wiki/"):]
+    old_rel = old_path.split("/", 1)[1] if "/" in old_path else old_path
+    new_rel = new_path.split("/", 1)[1] if "/" in new_path else new_path
     for doc in list_collection(conn, "wiki"):
         if doc["path"] == new_path:
             continue

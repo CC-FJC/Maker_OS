@@ -10,8 +10,8 @@ from markdown_it import MarkdownIt
 # but defense in depth matters on a lab server. [[wikilinks]] are
 # expanded to internal links before rendering.
 _md = MarkdownIt("commonmark", {"html": False, "linkify": True, "typographer": True})
-# Tables and strikethrough are GFM extensions disabled by the strict
-# CommonMark preset; the lab's inventory pages need real tables.
+# Tables, strikethrough and ==highlight== are GFM extensions disabled by
+# the strict CommonMark preset; the lab's inventory pages need tables.
 _md.enable(["table", "strikethrough"])
 
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
@@ -76,6 +76,20 @@ def _wikilink_target(target: str) -> str:
 # block endpoint; the checkbox carries the line index of the item).
 _TASK_ITEM = re.compile(r'<li>\[( |x|X)\]\s*')
 
+# Safe inline styling without raw HTML: {c:#hex}texto{/c} -> colored span,
+# {u}texto{/u} -> underline, ==texto== -> <mark>. The color is validated as
+# hex and the inner text is already escaped by markdown-it (html is off),
+# so this cannot inject markup.
+_COLOR_SPAN = re.compile(r"\{c:(#[0-9a-fA-F]{3,8})\}([^\n]+?)\{/c\}")
+_UNDERLINE_SPAN = re.compile(r"\{u\}([^\n]+?)\{/u\}")
+_MARK_SPAN = re.compile(r"==([^\n=]+)==")
+
+
+def _inline_styles(html: str) -> str:
+    html = _COLOR_SPAN.sub(r'<span style="color:\1">\2</span>', html)
+    html = _UNDERLINE_SPAN.sub(r"<u>\1</u>", html)
+    return _MARK_SPAN.sub(r"<mark>\1</mark>", html)
+
 
 def _task_checkboxes(html: str) -> str:
     def repl(match: re.Match[str]) -> str:
@@ -95,4 +109,4 @@ def render_markdown(body: str) -> str:
     stripped = body.strip()
     if stripped.startswith(">") and _CALLOUT_HEAD.match(stripped.split("\n", 1)[0]):
         return _render_callout(stripped)
-    return _task_checkboxes(_size_images(_md.render(_WIKILINK.sub(repl, body))))
+    return _inline_styles(_task_checkboxes(_size_images(_md.render(_WIKILINK.sub(repl, body)))))

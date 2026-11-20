@@ -5,7 +5,7 @@
           hx-target=".blocks" hx-swap="beforeend">
       <input type="hidden" name="despues" value="-1">
       {% for tipo, label in block_types.items() %}
-      <button type="submit" name="tipo" value="{{ tipo }}" class="menu-item">
+      <button type="submit" name="tipo" value="{{ tipo }}" class="menu-grid-item" title="Añadir {{ label }}">
         {{ icon(block_icons.get(tipo), cls="icon") }}<span>{{ label }}</span>
       </button>
       {% endfor %}
