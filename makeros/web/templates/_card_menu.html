@@ -3,7 +3,7 @@
 {% set _coll = _parts[0] %}
 {% set _page = _parts[1:] | join("/") %}
 <details class="card-menu">
-  <summary title="Opciones de la página" aria-label="Opciones de la página">{{ icon("more-vertical") }}</summary>
+  <summary title="Opciones de la página" aria-label="Opciones de la página">{{ icon("more-vertical", cls="icon menu-open-icon") }}{{ icon("x", cls="icon menu-close-icon") }}</summary>
   <div class="card-menu-panel">
     <div class="menu-grid">
       <form method="post" action="/{{ _coll }}/{{ _page }}/duplicar">

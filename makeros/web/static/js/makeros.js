@@ -1610,36 +1610,6 @@ window.makerosReloadModels = function () {
     });
 };
 
-// ---- Assistant page: model picker (admin) ----
-(function () {
-  var sel = document.getElementById("assistant-model");
-  if (!sel) { return; }
-  sel.addEventListener("change", function () {
-    fetch("/asistente/modelo", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "modelo=" + encodeURIComponent(sel.value),
-    }).then(function () { sel.title = "Modelo: " + sel.value; })
-      .catch(function () {});
-  });
-})();
-window.makerosAssistantReloadModels = function () {
-  var sel = document.getElementById("assistant-model");
-  if (!sel) { return; }
-  var prev = sel.value;
-  fetch("/asistente/modelos")
-    .then(function (r) { return r.json(); })
-    .then(function (d) {
-      sel.innerHTML = "";
-      (d.models || []).forEach(function (m) {
-        var o = document.createElement("option");
-        o.value = m; o.textContent = m;
-        if (m === (prev || d.model)) { o.selected = true; }
-        sel.appendChild(o);
-      });
-    })
-    .catch(function () {});
-};
 
 // ---- Notes grid: a freshly created card edits inline, saves on blur ----
 document.addEventListener("focusout", function (e) {
@@ -1719,6 +1689,16 @@ document.addEventListener("change", function (e) {
 });
 
 
+
+// ---- Popup menus (3-dot, add, icon pickers): click outside closes them ----
+var MAKEROS_POPUP_MENUS = "details.block-menu, details.card-menu, details.add-menu, details.icon-picker, details.banner-menu, details.chat-sources-dd";
+document.addEventListener("click", function (e) {
+  var open = document.querySelectorAll(MAKEROS_POPUP_MENUS + "[open]");
+  open.forEach(function (d) {
+    if (!d.contains(e.target)) { d.open = false; }
+  });
+});
+
 // ---- Card 3-dot menu: clicks inside it must not trigger the card's link ----
 // (submit buttons keep their default so the option forms still POST).
 document.addEventListener("click", function (e) {
@@ -1736,3 +1716,425 @@ function makerosDraftTitle(input) {
   var btn = document.getElementById("draft-save");
   if (btn) { btn.disabled = !input.value.trim(); }
 }
+
+// ---- Asistente: chat shell (tabs, scroll, session sync) ----
+document.addEventListener("htmx:afterSwap", function (e) {
+  var t = makerosSwapTarget(e);
+  if (!t || !t.querySelector) return;
+  var shell = t.id === "chat-shell" ? t : t.querySelector("#chat-shell");
+  if (!shell) return;
+  var hidden = document.getElementById("chat-session-id");
+  if (hidden) { hidden.value = shell.dataset.active || ""; }
+  var msgs = shell.querySelector("#chat-messages");
+  if (msgs) { msgs.scrollTop = msgs.scrollHeight; }
+  var input = document.getElementById("chat-input");
+  if (input) { input.focus(); }
+});
+
+// After sending, clear the input box (the swapped shell keeps the session).
+document.addEventListener("htmx:afterRequest", function (e) {
+  var elt = e.detail && e.detail.elt;
+  if (elt && elt.id === "chat-form") {
+    var input = document.getElementById("chat-input");
+    if (input) { input.value = ""; input.style.height = ""; }
+    makerosChatMentionsHide();
+  }
+});
+
+// ---- Asistente: @ mention autocomplete in the chat input ----
+function makerosChatMentionsHide() {
+  var box = document.getElementById("chat-mentions");
+  if (box) { box.hidden = true; box.innerHTML = ""; }
+}
+
+function makerosChatMentionsRender(items) {
+  var box = document.getElementById("chat-mentions");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!items.length) {
+    var empty = document.createElement("div");
+    empty.className = "chat-mention-empty";
+    empty.textContent = "Sin páginas que coincidan";
+    box.appendChild(empty);
+  }
+  items.forEach(function (item) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "chat-mention-item";
+    b.innerHTML = '<svg class="icon" aria-hidden="true">' +
+      '<use href="/static/vendor/feather-sprite.svg#file-text"/></svg>';
+    var label = document.createElement("span");
+    label.textContent = item.title;
+    var path = document.createElement("span");
+    path.className = "mention-path";
+    path.textContent = "/" + item.path;
+    b.appendChild(label);
+    b.appendChild(path);
+    b.addEventListener("mousedown", function (ev) {
+      ev.preventDefault(); // keep textarea focus
+      makerosChatMentionPick(item.path);
+    });
+    box.appendChild(b);
+  });
+  box.hidden = false;
+}
+
+function makerosChatMentionPick(path) {
+  var input = document.getElementById("chat-input");
+  if (!input) return;
+  var val = input.value;
+  var m = val.match(/@([a-zA-Z0-9][\w./-]*)?$/);
+  if (m) {
+    input.value = val.slice(0, m.index) + "@" + path + " ";
+  } else {
+    input.value = val + "@" + path + " ";
+  }
+  makerosChatMentionsHide();
+  input.focus();
+}
+
+var makerosMentionTimer = null;
+document.addEventListener("input", function (e) {
+  var input = e.target;
+  if (!input || input.id !== "chat-input") return;
+  // grow the textarea with content
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 140) + "px";
+  clearTimeout(makerosMentionTimer);
+  var m = input.value.match(/@([a-zA-Z0-9][\w./-]*)?$/);
+  if (!m) { makerosChatMentionsHide(); return; }
+  var tok = m[1] || "";
+  makerosMentionTimer = setTimeout(function () {
+    fetch("/asistente/chat/mencionar?q=" + encodeURIComponent(tok), {
+      headers: { "HX-Request": "false" }
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        // Only show if the user is still typing the same token
+        var cur = document.getElementById("chat-input");
+        if (!cur || !cur.value.match(/@([a-zA-Z0-9][\w./-]*)?$/)) {
+          makerosChatMentionsHide();
+          return;
+        }
+        makerosChatMentionsRender(data.items || []);
+      })
+      .catch(function () { /* offline: keep quiet */ });
+  }, 180);
+});
+
+document.addEventListener("keydown", function (e) {
+  var input = e.target;
+  if (!input || input.id !== "chat-input") return;
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    var box = document.getElementById("chat-mentions");
+    var active = box && !box.hidden ? box.querySelector(".chat-mention-item.active") : null;
+    if (active) {
+      var path = active.querySelector(".mention-path");
+      if (path) { makerosChatMentionPick(path.textContent.replace(/^\//, "")); return; }
+    }
+    makerosChatMentionsHide();
+    var form = document.getElementById("chat-form");
+    if (form && input.value.trim()) { form.requestSubmit(); }
+  }
+  if (e.key === "Escape") { makerosChatMentionsHide(); }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    var b = document.getElementById("chat-mentions");
+    if (b && !b.hidden) {
+      var items = b.querySelectorAll(".chat-mention-item");
+      if (items.length) {
+        e.preventDefault();
+        var idx = Array.prototype.findIndex.call(items, function (el) {
+          return el.classList.contains("active");
+        });
+        items.forEach(function (el) { el.classList.remove("active"); });
+        idx = e.key === "ArrowDown"
+          ? (idx + 1) % items.length
+          : (idx - 1 + items.length) % items.length;
+        items[idx].classList.add("active");
+        items[idx].scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+});
+
+// Click outside the mentions dropdown closes it.
+document.addEventListener("click", function (e) {
+  var box = document.getElementById("chat-mentions");
+  var input = document.getElementById("chat-input");
+  if (box && !box.hidden && input && e.target !== input && !box.contains(e.target)) {
+    makerosChatMentionsHide();
+  }
+});
+
+// ---- Toasts: system messages as bottom-right popups, closable ----
+window.makerosToast = function (msg, type) {
+  var box = document.getElementById("toasts");
+  if (!box || !msg) return;
+  type = type || "info";
+  var el = document.createElement("div");
+  el.className = "toast " + type;
+  el.setAttribute("role", type === "err" ? "alert" : "status");
+  var icons = { ok: "check-circle", err: "alert-triangle", aviso: "alert-circle", info: "info" };
+  el.innerHTML = '<svg class="icon" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#' +
+    (icons[type] || "info") + '"/></svg>';
+  var span = document.createElement("span");
+  span.textContent = msg;
+  var close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-close";
+  close.setAttribute("aria-label", "Cerrar aviso");
+  close.innerHTML = '<svg class="icon" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#x"/></svg>';
+  close.addEventListener("click", function () { makerosToastDismiss(el); });
+  el.appendChild(span);
+  el.appendChild(close);
+  box.appendChild(el);
+  var timer = setTimeout(function () { makerosToastDismiss(el); }, type === "err" ? 12000 : 6500);
+  el.addEventListener("mouseenter", function () { clearTimeout(timer); });
+  el.addEventListener("mouseleave", function () {
+    timer = setTimeout(function () { makerosToastDismiss(el); }, 2500);
+  });
+};
+
+function makerosToastDismiss(el) {
+  if (!el || el.classList.contains("out")) return;
+  el.classList.add("out");
+  setTimeout(function () { el.remove(); }, 200);
+}
+
+// Elements carrying data-toast (initial page or htmx swap) become toasts once.
+function makerosScanToasts(root) {
+  var scope = root && root.querySelectorAll ? root : document;
+  scope.querySelectorAll("[data-toast]").forEach(function (el) {
+    var msg = el.getAttribute("data-toast");
+    var type = el.getAttribute("data-toast-type") || "info";
+    el.removeAttribute("data-toast");
+    el.removeAttribute("data-toast-type");
+    makerosToast(msg, type);
+  });
+}
+document.addEventListener("DOMContentLoaded", function () { makerosScanToasts(document); });
+document.addEventListener("htmx:afterSwap", function (e) { makerosScanToasts(makerosSwapTarget(e)); });
+
+// ---- Assistant chat: vertical tab rail (click fija, hover previsualiza) ----
+(function () {
+  function side() { return document.getElementById("chat-side"); }
+
+  // El rail se pinta con .expanded (= fijado con click o vista previa al pasar
+  // el ratón), así una sola clase gobierna ancho, etiquetas y botones.
+  function apply(s) {
+    if (!s) return;
+    var open = s.classList.contains("open");
+    s.classList.toggle("expanded", open || s.dataset.preview === "1");
+    var btn = s.querySelector(".chat-side-toggle");
+    if (!btn) return;
+    // El botón no despliega: FIJA el rail abierto. El hover ya lo muestra,
+    // así que el ícono comunica "dejarlo abierto" y no "abrir/cerrar".
+    var label = open ? "Soltar la lista de chats (vuelve al hover)"
+      : "Fijar la lista de chats abierta";
+    btn.setAttribute("aria-pressed", open ? "true" : "false");
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    btn.classList.toggle("is-pinned", open);
+  }
+
+  window.makerosChatSideSync = apply;
+
+  // Renombrar un chat en línea: Enter guarda, Esc cancela, salir guarda
+  // (solo si el nombre cambió).
+  window.makerosChatRename = function (btn) {
+    var tab = btn && btn.closest ? btn.closest(".chat-tab") : null;
+    if (!tab) return;
+    var form = tab.querySelector(".chat-tab-rename");
+    var input = form && form.querySelector("input[name=titulo]");
+    var titleEl = tab.querySelector(".chat-tab-title");
+    if (!form || !input) return;
+    var original = titleEl ? titleEl.textContent.trim() : input.value;
+    var done = false;
+    function close() {
+      done = true;
+      tab.classList.remove("renaming");
+      form.hidden = true;
+    }
+    tab.classList.add("renaming");
+    form.hidden = false;
+    input.focus();
+    input.select();
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        close();
+      } else if (ev.key === "Enter") {
+        done = true;  // el submit nativo (htmx) se encarga del resto
+      }
+    });
+    input.addEventListener("blur", function () {
+      if (done) return;
+      var val = input.value.trim();
+      if (!val || val === original) { close(); return; }
+      done = true;
+      if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
+    });
+  };
+  window.makerosChatSideToggle = function () {
+    var s = side();
+    if (!s) return;
+    var open = s.classList.toggle("open");
+    // Plegar a mano gana sobre el hover: nada de quedarse abierto por debajo.
+    s.dataset.pinned = open ? "open" : "closed";
+    if (!open) { delete s.dataset.preview; }
+    try { localStorage.setItem("makeros-chat-side", open ? "open" : "closed"); } catch (e) {}
+    apply(s);
+  };
+  window.makerosChatSideRestore = function (root) {
+    var s = (root && root.id === "chat-side") ? root
+      : (root && root.querySelector ? root.querySelector("#chat-side") : null)
+      || side();
+    if (!s) return;
+    var saved = null;
+    try { saved = localStorage.getItem("makeros-chat-side"); } catch (e) {}
+    if (saved === "open") { s.classList.add("open"); }
+    if (s.dataset.hoverBound !== "1") {
+      s.dataset.hoverBound = "1";
+      s.addEventListener("pointerenter", function () {
+        if (s.dataset.pinned === "closed" || s.classList.contains("open")) return;
+        s.dataset.preview = "1";
+        apply(s);
+      });
+      s.addEventListener("pointerleave", function () {
+        delete s.dataset.preview;
+        delete s.dataset.pinned;  // el hover vuelve a previsualizar
+        apply(s);
+      });
+    }
+    apply(s);
+  };
+  document.addEventListener("DOMContentLoaded", function () { makerosChatSideRestore(document); });
+  document.addEventListener("htmx:afterSwap", function (e) {
+    makerosChatSideRestore(makerosSwapTarget(e));
+  });
+})();
+
+// ---- Scroll reveal: staggered fade-up on grids (transform/opacity only) ----
+var makerosRevealObs = null;
+function makerosReveal(root) {
+  var scope = root && root.querySelectorAll ? root : document;
+  var els = scope.querySelectorAll(".card-grid > *, .kanban-col");
+  if (!els.length) { return; }
+  // Reduced motion: never hide content for a decorative entrance.
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  if (!("IntersectionObserver" in window)) {
+    els.forEach(function (el) { el.classList.remove("reveal"); });
+    return;
+  }
+  if (!makerosRevealObs) {
+    makerosRevealObs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) { return; }
+        var el = en.target;
+        el.classList.add("in");
+        makerosRevealObs.unobserve(el);
+        // When the entrance finishes, drop the classes so hover
+        // transitions on the card go back to their own fast timing.
+        el.addEventListener("transitionend", function h() {
+          el.classList.remove("reveal", "in");
+          el.style.removeProperty("--d");
+          el.removeEventListener("transitionend", h);
+        });
+      });
+    }, { rootMargin: "0px 0px -6% 0px", threshold: 0.05 });
+  }
+  els.forEach(function (el, i) {
+    if (el.classList.contains("in") || el.classList.contains("reveal")) { return; }
+    el.classList.add("reveal");
+    el.style.setProperty("--d", (i % 8) * 45 + "ms");
+    makerosRevealObs.observe(el);
+  });
+}
+document.addEventListener("DOMContentLoaded", function () { makerosReveal(document); });
+document.addEventListener("htmx:afterSwap", function (e) { makerosReveal(makerosSwapTarget(e)); });
+
+// ---- Asistente: menú "+" (adjuntar / herramientas) ----
+window.makerosChatAttach = function (text) {
+  var input = document.getElementById("chat-input");
+  if (!input) return;
+  var sep = input.value && !/\s$/.test(input.value) ? " " : "";
+  input.value += sep + text;
+  input.focus();
+  input.dispatchEvent(new Event("input", { bubbles: true })); // abre el autocompletado @
+  var menu = document.getElementById("chat-add-menu");
+  if (menu) { menu.open = false; }
+};
+
+// ---- Asistente: envío optimista + burbuja "pensando…" ----
+document.addEventListener("htmx:beforeRequest", function (e) {
+  var elt = e.detail && e.detail.elt;
+  if (!elt || elt.id !== "chat-form") return;
+  var input = document.getElementById("chat-input");
+  var msgs = document.getElementById("chat-messages");
+  if (!input || !msgs) return;
+  var text = input.value.trim();
+  if (text) {
+    input.value = "";      // the message leaves the box the moment it's sent
+    input.style.height = "";
+    var um = document.createElement("div");
+    um.className = "chat-msg chat-msg-user";
+    var ub = document.createElement("div");
+    ub.className = "chat-bubble";
+    var ut = document.createElement("div");
+    ut.className = "chat-text";
+    ut.textContent = text; // textContent: nunca inyectar HTML del usuario
+    ub.appendChild(ut);
+    um.appendChild(ub);
+    msgs.appendChild(um);
+
+    var tm = document.createElement("div");
+    tm.className = "chat-msg chat-msg-assistant chat-thinking";
+    tm.innerHTML = '<div class="chat-bubble"><span class="dots"><i></i><i></i><i></i></span>' +
+      "<span>pensando…</span></div>";
+    msgs.appendChild(tm);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+  var btn = elt.querySelector("button[type=submit]");
+  if (btn) { btn.disabled = true; }
+});
+document.addEventListener("htmx:afterRequest", function (e) {
+  var elt = e.detail && e.detail.elt;
+  if (elt && elt.id === "chat-form") {
+    var btn = elt.querySelector("button[type=submit]");
+    if (btn) { btn.disabled = false; }
+  }
+});
+
+// ---- Reloj del servidor (sidebar + home), actualizado en vivo ----
+(function () {
+  var DIAS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  var MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+              "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  function hhmm(d) {
+    return String(d.getHours()).padStart(2, "0") + ":" +
+      String(d.getMinutes()).padStart(2, "0");
+  }
+  function fecha(d) {
+    return DIAS[d.getDay()] + " " + d.getDate() + " de " + MESES[d.getMonth()];
+  }
+  function setText(id, txt) {
+    var el = document.getElementById(id);
+    if (el) { el.textContent = txt; }
+  }
+  function tick() {
+    var d = new Date();
+    var hora = hhmm(d);
+    var dia = fecha(d);
+    setText("side-clock-time", hora);
+    setText("side-clock-date", dia);
+    setText("hero-clock", hora);
+    setText("hero-clock-date", dia);
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    tick();
+    setInterval(tick, 15000);
+  });
+})();

@@ -7,6 +7,10 @@
   <div class="hero-text">
     <h1>{{ site_name }}</h1>
     <p class="hero-subtitle">{{ greeting }}</p>
+    <p class="hero-clock" title="Fecha y hora actuales del servidor">
+      <span class="hero-time" id="hero-clock">{{ now_time }}</span>
+      <span class="hero-date" id="hero-clock-date">{{ now_date }}</span>
+    </p>
   </div>
   <div class="hero-actions">
     {% if user and user["role"] != "viewer" %}

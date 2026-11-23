@@ -2,7 +2,10 @@
 {% block title %}MakerOS — Buscar{% endblock %}
 {% block content %}
 <header class="page-header">
-  <h1>Buscar</h1>
+  <p class="breadcrumb"><a href="/">Inicio</a> / Buscar</p>
+  <div class="page-header-row">
+    <h1>Buscar</h1>
+  </div>
 </header>
 
 <form class="big-search" action="/search" method="get">
@@ -12,7 +15,7 @@
 
 {% if q %}
   <p class="page-subtitle">{{ results | length }} resultado(s) para «{{ q }}»</p>
-  <ul class="item-list">
+  <ul class="item-list search-results">
     {% for row in results %}
     <li class="item-row">
       <a class="item-title" href="/{{ row["path"] }}">{{ row["title"] or row["path"] }}</a>

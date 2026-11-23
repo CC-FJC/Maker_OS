@@ -8,72 +8,62 @@
       {{ icon("cpu") }}
       <span>Asistente</span>
     </h1>
-    <div class="header-actions">
-      {% if is_admin %}
-      <select id="assistant-model" aria-label="Modelo del asistente"
-              title="Modelo servido por LM Studio (se carga solo al usarse)">
-        {% for m in llm_models %}
-        <option value="{{ m }}"{% if m == llm_model %} selected{% endif %}>{{ m }}</option>
-        {% endfor %}
-        {% if llm_model and llm_model not in llm_models %}
-        <option value="{{ llm_model }}" selected>{{ llm_model }} (guardado)</option>
-        {% endif %}
-      </select>
-      <button type="button" class="btn-ghost" onclick="makerosAssistantReloadModels()"
-              title="Volver a pedir la lista de modelos al servidor">Recargar</button>
-      {% else %}
-      <span class="admin-muted" title="Servidor: {{ llm_base_url }}">Modelo: <strong>{{ llm_model or "—" }}</strong></span>
-      {% endif %}
-    </div>
   </div>
-  <p class="page-subtitle">Pregunta sobre la documentación del laboratorio.
-    Busca en todas las páginas y responde con el modelo local ({{ llm_base_url or "sin configurar" }}).</p>
+  <p class="page-subtitle">Chatea con el modelo local.
+    Menciona páginas con <code>@ruta</code> para darles contexto. Tus chats son privados.</p>
 </header>
 
-<div class="assistant-card">
-  <form hx-post="/asistente/preguntar" hx-target="#assistant-answer"
-        hx-swap="innerHTML" hx-indicator="#assistant-busy" class="assistant-form">
-    <input name="pregunta" type="text" required autocomplete="off"
-           placeholder="¿Cómo se configura la impresora del taller?">
-    <button class="btn-primary" type="submit">Preguntar</button>
-  </form>
-  <p id="assistant-busy" class="htmx-indicator assistant-busy">Buscando en la documentación…</p>
+{% include "_assistant_conn.html" %}
 
-  {% if not llm_ready %}
-  <div class="callout callout-aviso">
-    <p class="callout-title">Modelo sin configurar</p>
-    <p>Conecta LM Studio desde el panel de administración (Integraciones).
-      Sin modelo, el asistente queda apagado; el resto de la plataforma funciona igual.</p>
-  </div>
-  {% endif %}
-
-  <div id="assistant-answer" class="assistant-answer-zone" aria-live="polite"></div>
-</div>
-
-{% if user and user["role"] != "viewer" %}
-<div class="assistant-card">
-  <h2>Notas de reunión → tareas</h2>
-  <p class="page-subtitle">Pega las notas y el modelo extrae las tareas accionables;
-    cada una se crea como página en <code>/tasks</code> con estado «por hacer».</p>
-  <form hx-post="/asistente/tareas" hx-target="#assistant-tasks"
-        hx-swap="innerHTML" hx-indicator="#assistant-tasks-busy" class="assistant-form assistant-form-col">
-    <textarea name="notas" rows="5" required
-              placeholder="- Jacob trae las llaves del taller el martes&#10;- Se decide renovar la cortadora láser&#10;- Café con el decano el jueves 10:00"></textarea>
-    <button class="btn-primary" type="submit">Extraer tareas</button>
-  </form>
-  <p id="assistant-tasks-busy" class="htmx-indicator assistant-busy">Pensando con el modelo local…</p>
-  <div id="assistant-tasks" aria-live="polite"></div>
-</div>
-
-{% if user and user["role"] != "viewer" %}
-<div class="assistant-card">
-  <h2>Digest semanal</h2>
-  <p class="page-subtitle">Resume con el modelo local los cambios y eventos de los últimos
-    7 días y lo guarda como página wiki en <code>/wiki/reports</code>.</p>
-  <form method="post" action="/asistente/digest" class="admin-tool">
-    <button class="btn-primary" type="submit">Generar digest de la semana</button>
-  </form>
-</div>
+{% if not llm_ready %}
+<div hidden data-toast="Servidor LLM sin configurar o sin respuesta. Conéctalo con el botón «Servidor» de la barra de arriba (ej. http://localhost:1234/v1), elige un modelo y pulsa «Cargar». Sin modelo, el asistente queda apagado; el resto de la plataforma funciona igual."
+     data-toast-type="aviso"></div>
+{% elif llm_model and not llm_model_loaded %}
+<div hidden data-toast="El modelo «{{ llm_model }}» aún no está cargado en memoria; LM Studio lo cargará solo al primer mensaje (o pulsa «Cargar» para cargarlo ya)."
+     data-toast-type="info"></div>
 {% endif %}
-{% endif %}
+
+<div class="assistant-chat-wrap">
+  {% include "_chat_shell.html" %}
+  <form id="chat-form" class="chat-form"
+        hx-post="/asistente/chat/mensaje" hx-target="#chat-shell" hx-swap="outerHTML"
+        hx-indicator="#chat-busy">
+    <input type="hidden" name="session_id" id="chat-session-id" value="{{ active_chat or '' }}">
+    <details class="add-menu chat-add" id="chat-add-menu">
+      <summary title="Adjuntar o invocar una herramienta" aria-label="Abrir menú de adjuntos">
+        <svg class="icon" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#plus"/></svg>
+      </summary>
+      <div class="add-menu-panel chat-add-panel" role="menu">
+        <div class="menu-grid">
+          <button type="button" class="menu-grid-item" onclick="makerosChatAttach('@')">
+            {{ icon("at-sign") }}<span>Adjuntar página</span>
+          </button>
+          <button type="button" class="menu-grid-item" onclick="makerosChatAttach('@calendario/')">
+            {{ icon("calendar") }}<span>Adjuntar calendario</span>
+          </button>
+          {% if user and user["role"] != "viewer" %}
+          <button type="button" class="menu-grid-item"
+                  onclick="makerosOpenModal('/asistente/tareas/form?fragmento=1', 'Notas → tareas')">
+            {{ icon("check-square") }}<span>Extraer tareas de notas</span>
+          </button>
+          <button type="button" class="menu-grid-item"
+                  hx-post="/asistente/digest" hx-target="#toasts" hx-swap="beforeend"
+                  hx-indicator="#chat-busy" hx-confirm="¿Generar el digest semanal con el modelo local?">
+            {{ icon("file-text") }}<span>Digest semanal</span>
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </details>
+    <div class="chat-input-wrap">
+      <textarea id="chat-input" name="texto" rows="1" required autocomplete="off"
+        placeholder="Escribe un mensaje… usa @ para adjuntar una página (ej. @wiki/guia)"></textarea>
+      <div id="chat-mentions" class="chat-mentions" hidden></div>
+    </div>
+    <button class="btn-primary chat-send" type="submit" title="Enviar (Enter)">
+      {{ icon("send") }}<span>Enviar</span>
+    </button>
+  </form>
+  <p id="chat-busy" class="htmx-indicator chat-busy">{{ icon("cpu") }} Pensando con el modelo local…</p>
+</div>
 {% endblock %}

@@ -82,6 +82,26 @@ CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
     INSERT INTO documents_fts (rowid, title, body)
     VALUES (new.id, new.title, new.body);
 END;
+
+-- Private per-user LLM chat sessions (assistant page). Chats are
+-- strictly user-scoped: every query filters by user_id.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    role         TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content      TEXT NOT NULL,
+    sources_json TEXT NOT NULL DEFAULT '[]',   -- doc paths attached via @ or RAG
+    tools_json   TEXT NOT NULL DEFAULT '[]',   -- tool calls the model made while answering
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -117,4 +137,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE calendar_events ADD COLUMN category TEXT NOT NULL DEFAULT ''")
     if "people" not in columns:
         conn.execute("ALTER TABLE calendar_events ADD COLUMN people TEXT NOT NULL DEFAULT ''")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(chat_messages)")}
+    if "tools_json" not in columns:
+        conn.execute("ALTER TABLE chat_messages ADD COLUMN tools_json TEXT NOT NULL DEFAULT '[]'")
     conn.commit()

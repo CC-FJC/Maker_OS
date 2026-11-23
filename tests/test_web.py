@@ -1977,11 +1977,94 @@ def test_wiki_graph_shows_nodes_and_edges(logged_in_client, settings):
     assert '"target": "wiki/nodo-b"' in page.text
 
 
-def test_assistant_page_shows_offline_state(logged_in_client):
+def test_assistant_page_shows_chat(logged_in_client):
     page = logged_in_client.get("/asistente")
     assert page.status_code == 200
-    assert "Modelo sin configurar" in page.text
-    assert "/asistente/preguntar" in page.text
+    assert 'data-toast-type="aviso"' in page.text  # offline notice as toast
+    assert 'id="chat-shell"' in page.text
+    assert 'id="chat-form"' in page.text
+    assert "Nuevo chat" in page.text
+
+
+def test_chat_session_send_mention_and_privacy(logged_in_client, settings, monkeypatch):
+    import re
+
+    from makeros import auth
+    from makeros.db import connect, init_schema
+    from makeros.web import llm
+
+    monkeypatch.setattr(
+        llm, "chat_with_tools",
+        lambda conn, messages, tools=None, executor=None, max_steps=5: ("Respuesta de prueba.", []),
+    )
+
+    # New chat tab returns the shell with an active session id.
+    created = logged_in_client.post("/asistente/chat/nuevo", headers={"HX-Request": "true"})
+    assert created.status_code == 200
+    sid = int(re.search(r'data-active="(\d+)"', created.text).group(1))
+
+    # @ autocomplete finds indexed pages by path prefix.
+    _write(settings.content_dir / "wiki" / "prusa.md",
+           {"title": "Prusa"}, "La Prusa se calibra con el paso a paso.")
+    _reindex(settings)
+    mentions = logged_in_client.get("/asistente/chat/mencionar?q=wiki/pru")
+    assert mentions.status_code == 200
+    assert "wiki/prusa" in mentions.text
+
+    # Send a message with an @mention: both bubbles + source chip render,
+    # and the session is auto-titled from the first message.
+    sent = logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": sid, "texto": "¿Cómo se calibra? @wiki/prusa"},
+        headers={"HX-Request": "true"},
+    )
+    assert sent.status_code == 200
+    assert "chat-msg-user" in sent.text
+    assert "chat-msg-assistant" in sent.text
+    assert "Respuesta de prueba." in sent.text
+    assert "wiki/prusa" in sent.text  # source chip links back to the page
+    assert "¿Cómo se calibra? @wiki/prusa" in sent.text  # new tab title
+
+    # Re-opening the tab shows the stored history.
+    reopened = logged_in_client.get(f"/asistente/chat/{sid}", headers={"HX-Request": "true"})
+    assert reopened.status_code == 200
+    assert "Respuesta de prueba." in reopened.text
+
+    # A second user can't see, open, message or delete someone else's chat.
+    conn = connect(settings.db_path)
+    init_schema(conn)
+    auth.create_user(conn, "maria", "secreto123", role="member")
+    conn.close()
+    logged_in_client.post("/logout")
+    logged_in_client.post("/login", data={"username": "maria", "password": "secreto123"})
+    assert logged_in_client.get(
+        f"/asistente/chat/{sid}", headers={"HX-Request": "true"}
+    ).status_code == 403
+    assert logged_in_client.post(f"/asistente/chat/{sid}/borrar").status_code == 403
+    assert logged_in_client.post(
+        "/asistente/chat/mensaje", data={"session_id": sid, "texto": "espía"}
+    ).status_code == 403
+    # ...and her own chat list stays empty.
+    page = logged_in_client.get("/asistente")
+    assert 'data-active=""' in page.text
+
+
+def test_chat_send_without_session_creates_one(logged_in_client, monkeypatch):
+    from makeros.web import llm
+
+    monkeypatch.setattr(llm, "chat", lambda conn, messages: "Hola.")
+    response = logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": "", "texto": "primer mensaje"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "/asistente?chat=" in response.headers["location"]
+
+    response = logged_in_client.post(
+        "/asistente/chat/mensaje", data={"session_id": "", "texto": "   "}
+    )
+    assert response.status_code == 400
 
 
 def test_assistant_answer_with_local_model(logged_in_client, settings, monkeypatch):
@@ -2512,3 +2595,638 @@ def test_explorer_views_and_address_bar(logged_in_client: TestClient, settings):
     lost = logged_in_client.get("/explorador?carpeta=no/existe")
     assert lost.status_code == 200
     assert "explorer-toolbar" in lost.text
+
+
+def test_llm_models_detailed_load_unload(monkeypatch):
+    from makeros.web import llm
+
+    calls = []
+
+    class FakeResp:
+        def __init__(self, payload, status=200):
+            self._p = payload
+            self.status_code = status
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError("http error")
+
+        def json(self):
+            return self._p
+
+    def fake_get(url, timeout=5.0):
+        calls.append(("GET", url))
+        if url.endswith("/v1/models"):
+            return FakeResp({"data": [{"id": "loaded-model"}]})
+        if url.endswith("/api/v0/models"):
+            return FakeResp({"data": [
+                {"id": "loaded-model", "type": "llm", "state": "loaded", "quantization": "Q4_K_M"},
+                {"id": "other-model", "type": "llm", "state": "not-loaded"},
+            ]})
+        raise RuntimeError("unexpected url")
+
+    def fake_post(url, json=None, timeout=5.0):
+        calls.append(("POST", url, json))
+        return FakeResp({}, 200)
+
+    monkeypatch.setattr(llm.httpx, "get", fake_get)
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+
+    models = llm.list_models_detailed("http://localhost:1234/v1")
+    assert [m["id"] for m in models] == ["loaded-model", "other-model"]
+    assert models[0]["loaded"] is True
+    assert models[1]["state"] == "not-loaded"
+
+    ok, _msg = llm.load_model("http://localhost:1234/v1", "other-model")
+    assert ok
+    assert any(c[0] == "POST" and c[1].endswith("/api/v1/models/load") for c in calls)
+    ok, _msg = llm.unload_model("http://localhost:1234", "loaded-model")
+    assert ok
+    assert any(c[0] == "POST" and c[1].endswith("/api/v1/models/unload") for c in calls)
+    assert llm.ping("http://localhost:1234/v1") is True
+    assert llm.normalize_base_url("http://h:1234") == "http://h:1234/v1"
+    assert llm.normalize_base_url("http://h:1234/v1") == "http://h:1234/v1"
+    assert llm.normalize_base_url("  ") == ""
+
+
+def test_assistant_conn_bar_and_model_management(logged_in_client, settings, monkeypatch):
+    from makeros import auth
+    from makeros.db import connect, init_schema
+    from makeros.web import llm
+
+    page = logged_in_client.get("/asistente")
+    assert 'id="assistant-conn"' in page.text
+
+    # Admin saves the server URL from the assistant page (normalized to /v1).
+    r = logged_in_client.post(
+        "/asistente/conexion", data={"base_url": "http://localhost:1234"},
+        headers={"HX-Request": "true"},
+    )
+    assert r.status_code == 200
+    assert "makerosCloseModal" in r.text  # respuesta de modal flotante
+    form = logged_in_client.get("/asistente/conexion/form?fragmento=1")
+    assert form.status_code == 200 and "modal-form" in form.text
+    conn = connect(settings.db_path)
+    base, _model = llm.llm_config(conn)
+    conn.close()
+    assert base == "http://localhost:1234/v1"
+
+    # Model list with load states renders; cargar selects the model too.
+    monkeypatch.setattr(llm, "ping", lambda base, timeout=3.0: True)
+    monkeypatch.setattr(llm, "list_models_detailed", lambda base, timeout=5.0: [
+        {"id": "m-cargado", "loaded": True, "state": "loaded"},
+        {"id": "m-libre", "loaded": False, "state": "not-loaded"},
+    ])
+    loaded, unloaded = [], []
+    monkeypatch.setattr(
+        llm, "load_model", lambda base, mid, timeout=120.0: loaded.append(mid) or (True, "ok")
+    )
+    monkeypatch.setattr(
+        llm, "unload_model", lambda base, mid, timeout=60.0: unloaded.append(mid) or (True, "ok")
+    )
+
+    page = logged_in_client.get("/asistente")
+    assert "m-cargado" in page.text and "· cargado" in page.text
+
+    r = logged_in_client.post(
+        "/asistente/modelo/cargar", data={"modelo": "m-libre"}, headers={"HX-Request": "true"}
+    )
+    assert r.status_code == 200
+    assert loaded == ["m-libre"]
+    conn = connect(settings.db_path)
+    _b, model = llm.llm_config(conn)
+    conn.close()
+    assert model == "m-libre"
+
+    # switching models unloads the previous one and loads the new one
+    loaded.clear()
+    unloaded.clear()
+    r = logged_in_client.post(
+        "/asistente/modelo", data={"modelo": "m-cargado"}, headers={"HX-Request": "true"}
+    )
+    assert r.status_code == 200
+    assert unloaded == ["m-libre"] and loaded == ["m-cargado"]
+
+    r = logged_in_client.post(
+        "/asistente/modelo/descargar", data={"modelo": "m-libre"}, headers={"HX-Request": "true"}
+    )
+    assert r.status_code == 200
+
+    # Member can manage models but not the server URL; viewer can do neither.
+    conn = connect(settings.db_path)
+    init_schema(conn)
+    auth.create_user(conn, "maria", "secreto123", role="member")
+    auth.create_user(conn, "vera", "secreto123", role="viewer")
+    conn.close()
+    logged_in_client.post("/logout")
+    logged_in_client.post("/login", data={"username": "maria", "password": "secreto123"})
+    r = logged_in_client.post("/asistente/modelo", data={"modelo": "m-cargado"})
+    assert r.status_code == 200
+    assert logged_in_client.post(
+        "/asistente/conexion", data={"base_url": "http://x:1/v1"}
+    ).status_code == 403
+    logged_in_client.post("/logout")
+    logged_in_client.post("/login", data={"username": "vera", "password": "secreto123"})
+    r = logged_in_client.post("/asistente/modelo", data={"modelo": "m-cargado"})
+    assert r.status_code == 403
+    assert logged_in_client.post(
+        "/asistente/modelo/cargar", data={"modelo": "m-cargado"}
+    ).status_code == 403
+
+
+def test_assistant_offline_notice_is_a_toast(logged_in_client, settings, monkeypatch):
+    # No server configured: the notice must be a closable toast, not a big block.
+    page = logged_in_client.get("/asistente")
+    assert 'data-toast-type="aviso"' in page.text
+    assert "Servidor LLM sin configurar" in page.text
+    assert "callout-aviso" not in page.text
+
+    # Server reachable + model chosen but not loaded: info toast, no aviso.
+    from makeros.web import llm
+
+    monkeypatch.setattr(llm, "status", lambda conn: {
+        "base": "http://localhost:1234/v1", "model": "m1", "reachable": True,
+        "models": [{"id": "m1", "loaded": False, "state": "not-loaded"}],
+        "model_loaded": False, "ready": True,
+    })
+    page = logged_in_client.get("/asistente")
+    assert 'data-toast-type="aviso"' not in page.text
+    assert 'data-toast-type="info"' in page.text
+    assert "aún no está cargado" in page.text
+
+    # Reachable + loaded: no toast at all.
+    monkeypatch.setattr(llm, "status", lambda conn: {
+        "base": "http://localhost:1234/v1", "model": "m1", "reachable": True,
+        "models": [{"id": "m1", "loaded": True, "state": "loaded"}],
+        "model_loaded": True, "ready": True,
+    })
+    page = logged_in_client.get("/asistente")
+    assert "data-toast" not in page.text
+
+
+def test_chat_calendar_mention_feeds_events_to_llm(logged_in_client, settings, monkeypatch):
+    from datetime import date, timedelta
+
+    from makeros.db import connect
+    from makeros.web import event_store, llm
+
+    conn = connect(settings.db_path)
+    today = date.today()
+    event_store.create_local_event(
+        conn, "Revisión de impresoras", f"{today}T10:00:00", f"{today}T11:00:00",
+        location="Taller",
+    )
+    event_store.create_local_event(
+        conn, "Cita con el decano", f"{today + timedelta(days=400)}T09:00:00",
+        f"{today + timedelta(days=400)}T10:00:00",
+    )
+    conn.close()
+
+    # @calendario/semana only feeds this week's events
+    seen = {}
+
+    def fake_chat(conn, messages, tools=None, executor=None, max_steps=5):
+        seen["messages"] = messages
+        return "Hay una revisión hoy.", []
+
+    monkeypatch.setattr(llm, "chat_with_tools", fake_chat)
+    created = logged_in_client.post("/asistente/chat/nuevo", headers={"HX-Request": "true"})
+    import re as _re
+    sid = int(_re.search(r'data-active="(\d+)"', created.text).group(1))
+    r = logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": sid, "texto": "¿qué hay @calendario/semana?"},
+        headers={"HX-Request": "true"},
+    )
+    assert r.status_code == 200
+    ctx_text = " ".join(m["content"] for m in seen["messages"])
+    assert "Revisión de impresoras" in ctx_text
+    assert "Cita con el decano" not in ctx_text  # out of range
+    assert "/calendario" in r.text  # source chip
+
+    # keyword "reunión" without @ also pulls the calendar in
+    seen.clear()
+    logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": sid, "texto": "¿tenemos reunión esta semana?"},
+        headers={"HX-Request": "true"},
+    )
+    ctx_text = " ".join(m["content"] for m in seen["messages"])
+    assert "Revisión de impresoras" in ctx_text
+
+    # mention autocomplete suggests the calendar
+    m = logged_in_client.get("/asistente/chat/mencionar?q=cal")
+    assert any(i["path"] == "calendario" for i in m.json()["items"])
+
+    # JSON endpoint with explicit range
+    r = logged_in_client.get(
+        f"/asistente/eventos?desde={today}&hasta={today + timedelta(days=500)}"
+    )
+    assert r.status_code == 200
+    titles = [e["summary"] for e in r.json()["events"]]
+    assert "Revisión de impresoras" in titles and "Cita con el decano" in titles
+    r = logged_in_client.get("/asistente/eventos?desde=nope")
+    assert r.status_code == 400
+
+
+def test_rag_pick_chunks_and_calendar_range():
+    from makeros.web.routes.assistant_routes import (
+        _calendar_range,
+        _chunk_body,
+        _pick_chunks,
+    )
+
+    body = "\n\n".join(f"Sección {i} " + "relleno " * 100 for i in range(10))
+    body += "\n\nMENCIÓN CLAVE prusa calibración\n\n"
+    picked = _pick_chunks(body, "cómo calibro la prusa")
+    assert "MENCIÓN CLAVE" in picked
+    assert len(picked) < len(body)
+    assert len(_chunk_body("corto")) == 1
+
+    from datetime import date
+
+    today = date.today()
+    s, e = _calendar_range("hoy")
+    assert (s, e) == (today, today)
+    s, e = _calendar_range("semana")
+    assert s.weekday() == 0 and (e - s).days == 6
+    s, e = _calendar_range("2026-01-01/2026-01-31")
+    assert (s, e) == (date(2026, 1, 1), date(2026, 1, 31))
+    s, e = _calendar_range("")
+    assert (e - s).days == 67
+
+
+def test_assistant_plus_menu_and_hidden_sources(logged_in_client, settings, monkeypatch):
+    import re
+
+    from makeros.web import llm
+
+    # "+" compendium present, old tools section gone
+    page = logged_in_client.get("/asistente")
+    assert 'id="chat-add-menu"' in page.text
+    assert "assistant-tools" not in page.text
+    assert "Adjuntar página" in page.text
+    assert "Adjuntar calendario" in page.text
+    assert "Digest semanal" in page.text
+
+    monkeypatch.setattr(
+        llm, "chat_with_tools",
+        lambda conn, messages, tools=None, executor=None, max_steps=5: ("Respuesta.", []),
+    )
+    created = logged_in_client.post("/asistente/chat/nuevo", headers={"HX-Request": "true"})
+    sid = int(re.search(r'data-active="(\d+)"', created.text).group(1))
+    long_msg = "¿cómo funciona el laboratorio en el día a día? " + "a" * 60
+    sent = logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": sid, "texto": long_msg},
+        headers={"HX-Request": "true"},
+    )
+    # sources hidden behind a dropdown, not rendered inline
+    assert '<details class="chat-sources-dd">' in sent.text
+    assert sent.text.count("chat-sources-dd") == sent.text.count("<details")
+    # auto-title: fragmento del primer mensaje, cortado en palabra completa
+    tab = re.search(r'chat-tab-title">([^<]+)<', sent.text)
+    assert tab and tab.group(1).startswith("¿cómo funciona el laboratorio")
+    assert len(tab.group(1)) <= 61 and tab.group(1).endswith("…")
+    # collapsed rail shows the initial letter too
+    assert "chat-tab-initial" in sent.text
+
+
+def test_assistant_tasks_form_fragment(logged_in_client):
+    r = logged_in_client.get("/asistente/tareas/form?fragmento=1")
+    assert r.status_code == 200
+    assert "modal-form" in r.text and "notas" in r.text
+
+
+def test_mencionar_bare_at_lists_recent_pages(logged_in_client):
+    r = logged_in_client.get("/asistente/chat/mencionar?q=")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert any(i["path"] == "wiki/inicio" for i in items)  # páginas recientes al abrir "@"
+
+
+def test_spec_from_text_relative_phrases():
+    from makeros.web.routes.assistant_routes import _spec_from_text
+
+    assert _spec_from_text("¿qué hay esta semana?") == "semana"
+    assert _spec_from_text("reuniones de la próxima semana") == "proxima-semana"
+    assert _spec_from_text("¿y mañana qué hay?") == "manana"
+    assert _spec_from_text("este mes tenemos varias citas") == "mes"
+    assert _spec_from_text("agenda del próximo mes") == "proximo-mes"
+    assert _spec_from_text("¿qué toca hoy?") == "hoy"
+    assert _spec_from_text("cuéntame algo random") is None
+
+
+def test_chat_sends_server_datetime_and_week_range(logged_in_client, settings, monkeypatch):
+    import re
+    from datetime import date, timedelta
+
+    from makeros.db import connect
+    from makeros.web import event_store, llm
+
+    conn = connect(settings.db_path)
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+    event_store.create_local_event(
+        conn, "Evento esta semana", f"{monday}T10:00:00", f"{monday}T11:00:00")
+    event_store.create_local_event(
+        conn, "Evento semana que viene", f"{monday + timedelta(days=10)}T10:00:00",
+        f"{monday + timedelta(days=10)}T11:00:00")
+    conn.close()
+
+    seen = {}
+
+    def fake_chat(conn, messages, tools=None, executor=None, max_steps=5):
+        seen["messages"] = messages
+        return "OK", []
+
+    monkeypatch.setattr(llm, "chat_with_tools", fake_chat)
+    created = logged_in_client.post("/asistente/chat/nuevo", headers={"HX-Request": "true"})
+    sid = int(re.search(r'data-active="(\d+)"', created.text).group(1))
+    r = logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": sid, "texto": "¿qué eventos hay esta semana?"},
+        headers={"HX-Request": "true"},
+    )
+    assert r.status_code == 200
+    ctx = " ".join(m["content"] for m in seen["messages"])
+    # the LLM gets the server datetime to resolve relative dates
+    assert "Fecha y hora actuales del laboratorio" in ctx
+    assert date.today().strftime("%Y-%m-%d") in ctx
+    # "esta semana" resolves to the current week, not the default 60-day window
+    assert "Evento esta semana" in ctx
+    assert "Evento semana que viene" not in ctx
+
+
+def test_sidebar_and_home_show_server_clock(logged_in_client):
+    import re
+
+    home = logged_in_client.get("/")
+    assert 'id="side-clock"' in home.text
+    assert 'id="hero-clock"' in home.text
+    assert re.search(r"\d{2}:\d{2}", home.text), "hora visible en el inicio"
+
+
+def test_chat_with_tools_loop_executes_tools_and_traces(conn, settings, monkeypatch):
+    from makeros.web import llm
+
+    llm.save_config(conn, "http://lms.local:1234/v1", "modelo-fc")
+    calls = []
+
+    def fake_post(url, json=None, timeout=None):
+        calls.append(json)
+
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                if len(calls) == 1:
+                    return {"choices": [{"message": {
+                        "role": "assistant", "content": "",
+                        "tool_calls": [{"id": "c1", "type": "function", "function": {
+                            "name": "fecha_actual", "arguments": "{}"}}],
+                    }}]}
+                return {"choices": [{"message": {
+                    "role": "assistant", "content": "Hoy es martes."}}]}
+
+        return R()
+
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+    executed = []
+
+    def executor(name, args):
+        executed.append((name, args))
+        return {"iso": "2026-11-17 10:00:00"}
+
+    answer, trace = llm.chat_with_tools(
+        conn, [{"role": "user", "content": "¿qué día es hoy?"}],
+        [{"type": "function"}], executor,
+    )
+    assert answer == "Hoy es martes."
+    assert executed == [("fecha_actual", {})]
+    assert trace == [{"name": "fecha_actual", "args": {}, "ok": True}]
+    assert calls[0]["tools"] == [{"type": "function"}]  # schemas sent on step 1
+    msgs = calls[1]["messages"]
+    assert msgs[-1]["role"] == "tool"
+    assert msgs[-1]["name"] == "fecha_actual"
+    assert "2026-11-17" in msgs[-1]["content"]
+
+
+def test_chat_with_tools_plain_answer_and_offline(conn, settings, monkeypatch):
+    from makeros.web import llm
+
+    llm.save_config(conn, "http://lms.local:1234/v1", "modelo")
+
+    def ok_post(url, json=None, timeout=None):
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"choices": [{"message": {
+                    "role": "assistant", "content": "respuesta directa"}}]}
+
+        return R()
+
+    monkeypatch.setattr(llm.httpx, "post", ok_post)
+    ans, trace = llm.chat_with_tools(
+        conn, [{"role": "user", "content": "hola"}], [], lambda n, a: {"x": 1},
+    )
+    assert ans == "respuesta directa"
+    assert trace == []  # no tool calls: graceful plain answer
+
+    def bad_post(url, json=None, timeout=None):
+        raise llm.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(llm.httpx, "post", bad_post)
+    ans, trace = llm.chat_with_tools(
+        conn, [{"role": "user", "content": "hola"}], [], lambda n, a: {},
+    )
+    assert ans is None and trace == []
+
+
+def test_exec_tool_vault_calendar_and_clock(conn, settings):
+    from datetime import date
+
+    from makeros.indexer import reindex_all
+    from makeros.web import event_store
+    from makeros.web.routes import assistant_routes as ar
+
+    assert reindex_all(conn, settings.content_dir) >= 2
+    today = date.today()
+    event_store.create_local_event(
+        conn, "Revisión de impresoras", f"{today}T10:00:00", f"{today}T11:00:00",
+        location="Taller",
+    )
+
+    res = ar._exec_tool(conn, settings, "buscar_documentos", {"query": "laboratorio"})
+    paths = [r["path"] for r in res["resultados"]]
+    assert "wiki/guia-del-sistema" in paths
+
+    res = ar._exec_tool(conn, settings, "buscar_documentos",
+                        {"query": "laboratorio", "coleccion": "wiki"})
+    assert all(r["collection"] == "wiki" for r in res["resultados"])
+    res = ar._exec_tool(conn, settings, "buscar_documentos", {"query": "zzz sin resultados"})
+    assert res["resultados"] == []
+    assert "error" in ar._exec_tool(conn, settings, "buscar_documentos", {"query": "  "})
+
+    res = ar._exec_tool(conn, settings, "leer_pagina", {"path": "wiki/inicio"})
+    assert res["path"] == "wiki/inicio"
+    assert "Bienvenido" in res["body"]
+    assert "error" in ar._exec_tool(conn, settings, "leer_pagina", {"path": "../secreto"})
+    assert "error" in ar._exec_tool(conn, settings, "leer_pagina", {"path": "wiki/no-existe"})
+
+    res = ar._exec_tool(conn, settings, "listar_paginas", {"coleccion": "wiki"})
+    assert "wiki/inicio" in [p["path"] for p in res["paginas"]]
+    assert "error" in ar._exec_tool(conn, settings, "listar_paginas", {"coleccion": "../x"})
+
+    res = ar._exec_tool(conn, settings, "fecha_actual", {})
+    assert res["iso"].startswith(str(today))
+    assert res["dia_semana"]
+
+    res = ar._exec_tool(conn, settings, "eventos_calendario",
+                        {"desde": str(today), "hasta": str(today)})
+    assert res["eventos"] and res["eventos"][0]["summary"] == "Revisión de impresoras"
+    assert res["eventos"][0]["location"] == "Taller"
+    assert "error" in ar._exec_tool(conn, settings, "eventos_calendario",
+                                    {"desde": "no-fecha"})
+
+    assert "error" in ar._exec_tool(conn, settings, "herramienta_falsa", {})
+
+
+def test_chat_send_persists_tool_trace_and_source_chip(logged_in_client, settings, monkeypatch):
+    import re as _re
+
+    from makeros.db import connect
+    from makeros.web import llm
+
+    trace = [{"name": "leer_pagina", "args": {"path": "wiki/inicio"}, "ok": True}]
+    monkeypatch.setattr(
+        llm, "chat_with_tools",
+        lambda conn, messages, tools=None, executor=None, max_steps=5: (
+            "Respuesta con datos de la wiki.", trace),
+    )
+    created = logged_in_client.post("/asistente/chat/nuevo", headers={"HX-Request": "true"})
+    sid = int(_re.search(r'data-active="(\d+)"', created.text).group(1))
+    r = logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": sid, "texto": "¿qué dice la página de inicio?"},
+        headers={"HX-Request": "true"},
+    )
+    assert r.status_code == 200
+    assert "Consultó 1 vez" in r.text
+    assert "leer_pagina" in r.text
+    assert 'href="/wiki/inicio"' in r.text  # página leída aparece como fuente
+
+    conn = connect(settings.db_path)
+    row = conn.execute(
+        "SELECT tools_json, sources_json FROM chat_messages WHERE role = 'assistant' "
+        "AND session_id = ?", (sid,),
+    ).fetchone()
+    conn.close()
+    import json as _json
+    assert _json.loads(row["tools_json"]) == trace
+    assert "wiki/inicio" in _json.loads(row["sources_json"])
+
+
+def test_chat_auto_title_and_rename(logged_in_client, settings, monkeypatch):
+    import re as _re
+
+    from makeros.db import connect
+    from makeros.web import llm
+    from makeros.web.routes.assistant_routes import _auto_title
+
+    # Nombre inicial inferido del primer mensaje: sin menciones, corta en palabra.
+    assert _auto_title("@wiki/inicio  ¿Cómo   funciona el laboratorio? ") == \
+        "¿Cómo funciona el laboratorio?"
+    assert _auto_title("x" * 80).endswith("…")
+
+    monkeypatch.setattr(
+        llm, "chat_with_tools",
+        lambda conn, messages, tools=None, executor=None, max_steps=5: ("Vale.", []),
+    )
+    created = logged_in_client.post("/asistente/chat/nuevo", headers={"HX-Request": "true"})
+    sid = int(_re.search(r'data-active="(\d+)"', created.text).group(1))
+    sent = logged_in_client.post(
+        "/asistente/chat/mensaje",
+        data={"session_id": sid, "texto": "@wiki/inicio ¿Cómo funciona el laboratorio?"},
+        headers={"HX-Request": "true"},
+    )
+    assert sent.status_code == 200
+    assert "¿Cómo funciona el laboratorio?" in sent.text  # título de la pestaña
+    assert "chat-tab-edit" in sent.text  # lápiz para renombrar
+
+    # Renombrar desde la lista: el nombre del usuario manda.
+    r = logged_in_client.post(
+        f"/asistente/chat/{sid}/renombrar", data={"titulo": "  Charla   de taller "},
+        headers={"HX-Request": "true"},
+    )
+    assert r.status_code == 200
+    assert ">Charla de taller<" in r.text
+    conn = connect(settings.db_path)
+    row = conn.execute("SELECT title FROM chat_sessions WHERE id = ?", (sid,)).fetchone()
+    msgs = conn.execute(
+        "SELECT COUNT(*) AS n FROM chat_messages WHERE session_id = ?", (sid,)
+    ).fetchone()
+    conn.close()
+    assert row["title"] == "Charla de taller"
+    assert msgs["n"] == 2  # el historial se conserva
+
+    # Un nombre vacío no borra el título.
+    assert logged_in_client.post(
+        f"/asistente/chat/{sid}/renombrar", data={"titulo": "   "}
+    ).status_code == 400
+    conn = connect(settings.db_path)
+    assert conn.execute(
+        "SELECT title FROM chat_sessions WHERE id = ?", (sid,)
+    ).fetchone()["title"] == "Charla de taller"
+    conn.close()
+
+    # Y no se puede renombrar el chat de otra persona.
+    from makeros import auth
+    from makeros.db import init_schema
+    conn = connect(settings.db_path)
+    init_schema(conn)
+    auth.create_user(conn, "maria", "secreto123", role="member")
+    conn.execute(
+        "INSERT INTO chat_sessions (user_id, title) VALUES (2, 'Chat de María')"
+    )
+    other = conn.execute("SELECT id FROM chat_sessions WHERE user_id = 2").fetchone()["id"]
+    conn.commit()
+    conn.close()
+    assert logged_in_client.post(
+        f"/asistente/chat/{other}/renombrar", data={"titulo": "secuestrado"}
+    ).status_code == 403
+
+
+def test_chat_rename_keeps_the_open_chat(logged_in_client, settings, monkeypatch):
+    """Renombrar una pestaña de la lista no cambia el chat que se está viendo."""
+    import re as _re
+
+    from makeros.web import llm
+
+    monkeypatch.setattr(
+        llm, "chat_with_tools",
+        lambda conn, messages, tools=None, executor=None, max_steps=5: ("Vale.", []),
+    )
+    ids = []
+    for texto in ("Primera charla", "Segunda charla"):
+        shell = logged_in_client.post("/asistente/chat/nuevo", headers={"HX-Request": "true"})
+        sid = int(_re.search(r'data-active="(\d+)"', shell.text).group(1))
+        ids.append(sid)
+        logged_in_client.post(
+            "/asistente/chat/mensaje", data={"session_id": sid, "texto": texto},
+            headers={"HX-Request": "true"},
+        )
+    primera, segunda = ids
+    # La segunda está abierta; renombramos la primera.
+    r = logged_in_client.post(
+        f"/asistente/chat/{primera}/renombrar",
+        data={"titulo": "Renombrada", "activo": str(segunda)},
+        headers={"HX-Request": "true"},
+    )
+    assert r.status_code == 200
+    assert f'data-active="{segunda}"' in r.text  # sigue abierta la segunda
+    assert "Segunda charla" in r.text and "Vale." in r.text  # su historial visible
+    assert ">Renombrada<" in r.text

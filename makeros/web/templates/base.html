@@ -106,6 +106,10 @@
     </div>
 
     {% if user %}
+    <div class="side-clock" id="side-clock" title="Fecha y hora actuales del servidor">
+      <span class="side-clock-time" id="side-clock-time">{{ now_time }}</span>
+      <span class="side-clock-date" id="side-clock-date">{{ now_date }}</span>
+    </div>
     <div class="sidebar-user">
       {% if user["avatar"] %}
       <img class="avatar" src="/media/{{ user["avatar"] }}"
@@ -184,6 +188,8 @@
     <div class="brain-resize" id="brain-resize"
          title="Arrastra para cambiar el tamaño" aria-hidden="true"></div>
   </div>
+
+  <div id="toasts" class="toasts" aria-live="polite" aria-label="Avisos del sistema"></div>
 
   {% if user %}
   <div class="palette-overlay" id="cmd-palette" hidden>

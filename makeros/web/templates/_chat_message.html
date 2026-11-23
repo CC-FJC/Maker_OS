@@ -1,0 +1,35 @@
+<div class="chat-msg chat-msg-{{ m.role }}">
+  <div class="chat-bubble">
+    {% if m.role == "assistant" %}
+    <div class="chat-text">{{ m.content_html | safe }}</div>
+    {% else %}
+    <div class="chat-text">{{ m.content }}</div>
+    {% endif %}
+    {% if m.role == "assistant" and m.tools %}
+    <details class="chat-sources-dd chat-tools-dd">
+      <summary title="Herramientas que usó el modelo para responder">
+        {{ icon("tool") }} Consultó {{ m.tools | length }} vez{{ "es" if m.tools | length != 1 }}
+      </summary>
+      <ul class="chat-tools-list">
+        {% for t in m.tools %}
+        <li><code>{{ t.name }}</code>
+          {% if t.args %}<span class="chat-tool-args">{{ t.args | tojson }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% if m.sources %}
+    <details class="chat-sources-dd">
+      <summary title="Mostrar las páginas usadas como contexto">
+        {{ icon("paperclip") }} Fuentes ({{ m.sources | length }})
+      </summary>
+      <div class="chat-sources">
+        {% for p in m.sources %}
+        <a class="filter-chip" href="/{{ p }}" title="/{{ p }}">{{ icon("file-text") }}/{{ p }}</a>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</div>

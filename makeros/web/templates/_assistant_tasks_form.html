@@ -1,0 +1,14 @@
+<span data-modal-title hidden>Notas de reunión → tareas</span>
+<form class="modal-form" hx-post="/asistente/tareas" hx-target="#makeros-modal-body"
+      hx-swap="innerHTML" hx-indicator="#tareas-busy">
+  <label>Pega las notas y el modelo extrae las tareas accionables
+    (cada una se crea en <code>/tasks</code> con estado «por hacer»).
+    <textarea name="notas" rows="6" required
+      placeholder="- Jacob trae las llaves del taller el martes&#10;- Se decide renovar la cortadora láser&#10;- Café con el decano el jueves 10:00"></textarea>
+  </label>
+  <p id="tareas-busy" class="htmx-indicator admin-muted">Pensando con el modelo local…</p>
+  <div class="modal-actions">
+    <button class="btn-primary" type="submit">Extraer tareas</button>
+    <button class="btn-ghost" type="button" onclick="makerosCloseModal()">Cancelar</button>
+  </div>
+</form>

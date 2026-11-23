@@ -1,0 +1,67 @@
+<div id="chat-shell" class="chat-shell" data-active="{{ active_chat or '' }}">
+  <aside class="chat-side" id="chat-side" aria-label="Chats">
+    <div class="chat-side-head">
+      <span class="chat-side-head-title">Chats</span>
+      <button type="button" class="chat-side-new" title="Nuevo chat"
+              hx-post="/asistente/chat/nuevo" hx-target="#chat-shell" hx-swap="outerHTML">
+        <svg class="icon" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#plus"/></svg>
+        <span class="chat-side-new-label">Nuevo chat</span>
+      </button>
+    </div>
+    <div class="chat-side-list" role="tablist" aria-label="Chats">
+      {% for s in chat_sessions %}
+      <div class="chat-tab{% if s.id == active_chat %} active{% endif %}" role="tab"
+           aria-selected="{{ 'true' if s.id == active_chat else 'false' }}">
+        <button type="button" class="chat-tab-btn"
+                hx-get="/asistente/chat/{{ s.id }}" hx-target="#chat-shell" hx-swap="outerHTML"
+                title="{{ s.title }}">
+          <span class="chat-tab-initial" aria-hidden="true">{{ s.title[:1] | upper }}</span>
+          <span class="chat-tab-title">{{ s.title }}</span>
+        </button>
+        <form class="chat-tab-rename" hidden
+              hx-post="/asistente/chat/{{ s.id }}/renombrar"
+              hx-target="#chat-shell" hx-swap="outerHTML">
+          <input type="text" name="titulo" value="{{ s.title }}" maxlength="60" required
+                 autocomplete="off" spellcheck="false"
+                 aria-label="Nuevo nombre del chat «{{ s.title }}»">
+          {# el chat abierto no cambia al renombrar otro de la lista #}
+          <input type="hidden" name="activo" value="{{ active_chat or '' }}">
+        </form>
+        <button type="button" class="chat-tab-edit" title="Renombrar este chat"
+                aria-label="Renombrar el chat «{{ s.title }}»"
+                onclick="makerosChatRename(this)">
+          <svg class="icon" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#edit-2"/></svg>
+        </button>
+        <button type="button" class="chat-tab-del" title="Eliminar chat"
+                aria-label="Eliminar chat «{{ s.title }}»"
+                hx-post="/asistente/chat/{{ s.id }}/borrar" hx-target="#chat-shell" hx-swap="outerHTML"
+                hx-confirm="¿Eliminar este chat y todo su historial?">
+          <svg class="icon" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#x"/></svg>
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="chat-side-foot">
+      <button type="button" class="chat-side-toggle" onclick="makerosChatSideToggle()"
+              aria-label="Fijar la lista de chats abierta" aria-pressed="false"
+              title="Fijar la lista de chats abierta">
+        <svg class="icon" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#sidebar"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <div class="chat-main">
+    <div class="chat-messages" id="chat-messages">
+      {% for m in chat_messages %}
+      {% include "_chat_message.html" %}
+      {% else %}
+      <div class="chat-empty">
+        <svg class="icon icon-lg" aria-hidden="true"><use href="/static/vendor/feather-sprite.svg#message-circle"/></svg>
+        <p>Empieza la conversación. Escribe <code>@</code> seguido de una ruta
+          (por ejemplo <code>@wiki/guia-del-laboratorio</code> o <code>@calendario/semana</code>)
+          para adjuntar esa página o los eventos como contexto del modelo.</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>

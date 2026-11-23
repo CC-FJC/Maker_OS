@@ -20,7 +20,7 @@
   <span class="card-meta">actualizada {{ note["updated"] }}</span>
   {% if user and user["role"] != "viewer" %}
   <details class="card-menu">
-    <summary title="Opciones de la nota" aria-label="Opciones de la nota">{{ icon("more-vertical") }}</summary>
+    <summary title="Opciones de la nota" aria-label="Opciones de la nota">{{ icon("more-vertical", cls="icon menu-open-icon") }}{{ icon("x", cls="icon menu-close-icon") }}</summary>
     <div class="card-menu-panel">
       <div class="menu-grid">
         <form method="post" action="/notas/{{ note["path"] }}/duplicar">

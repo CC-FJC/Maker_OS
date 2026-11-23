@@ -1,0 +1,64 @@
+<div id="assistant-conn" class="assistant-conn">
+  <span class="conn-status"
+        title="{{ (llm_base_url ~ ' · ') if llm_base_url else '' }}{% if llm_base_url %}{{ 'Servidor alcanzable' if llm_reachable else 'El servidor no responde' }}{% else %}Sin servidor configurado{% endif %}">
+    <span class="conn-dot{% if llm_reachable %} on{% endif %}" aria-hidden="true"></span>
+    <span class="conn-state">{% if llm_reachable %}conectado{% elif llm_base_url %}sin respuesta{% else %}sin servidor{% endif %}</span>
+  </span>
+
+  {% if can_manage %}
+  <select id="assistant-model" name="modelo" aria-label="Modelo del asistente"
+          title="El modelo elegido se usa en el chat; «cargado» = ya está en memoria"
+          hx-post="/asistente/modelo" hx-target="#assistant-conn" hx-swap="outerHTML"
+          hx-trigger="change">
+    {% if not llm_models_detailed %}
+    <option value="{{ llm_model }}" selected>{{ llm_model or "(sin modelos detectados)" }}</option>
+    {% endif %}
+    {% for m in llm_models_detailed %}
+    <option value="{{ m.id }}"{% if m.id == llm_model %} selected{% endif %}>
+      {{ m.id }}{% if m.loaded %} · cargado{% endif %}
+    </option>
+    {% endfor %}
+    {% if llm_models_detailed and llm_model and llm_model not in llm_models_detailed | map(attribute="id") | list %}
+    <option value="{{ llm_model }}" selected>{{ llm_model }} (guardado)</option>
+    {% endif %}
+  </select>
+  {% else %}
+  <span class="conn-state conn-model-readonly">{{ llm_model or "sin modelo" }}</span>
+  {% endif %}
+
+  <div class="conn-actions">
+    {% if can_manage %}
+    <button type="button" class="conn-icon-btn" title="Cargar el modelo elegido en memoria"
+            aria-label="Cargar el modelo elegido en memoria"
+            hx-post="/asistente/modelo/cargar" hx-target="#assistant-conn" hx-swap="outerHTML"
+            hx-indicator="#conn-busy"
+            hx-vals="js:{modelo: (document.getElementById('assistant-model')||{value:''}).value}">
+      {{ icon("download-cloud") }}
+    </button>
+    <button type="button" class="conn-icon-btn" title="Descargar el modelo elegido de la memoria"
+            aria-label="Descargar el modelo elegido de la memoria"
+            hx-post="/asistente/modelo/descargar" hx-target="#assistant-conn" hx-swap="outerHTML"
+            hx-indicator="#conn-busy"
+            hx-vals="js:{modelo: (document.getElementById('assistant-model')||{value:''}).value}">
+      {{ icon("upload-cloud") }}
+    </button>
+    {% endif %}
+    <button type="button" class="conn-icon-btn" title="Volver a pedir la lista de modelos al servidor"
+            aria-label="Recargar la lista de modelos"
+            hx-get="/asistente/conexion" hx-target="#assistant-conn" hx-swap="outerHTML"
+            hx-indicator="#conn-busy">{{ icon("refresh-cw") }}</button>
+    {% if is_admin %}
+    <button type="button" class="conn-icon-btn conn-server-btn" title="Configurar el servidor LLM"
+            aria-label="Configurar el servidor LLM"
+            onclick="makerosOpenModal('/asistente/conexion/form?fragmento=1', 'Servidor LLM')">
+      {{ icon("server") }}
+    </button>
+    {% endif %}
+  </div>
+
+  <p id="conn-busy" class="htmx-indicator conn-busy">{{ icon("cpu") }} Hablando con el servidor…</p>
+  {% if llm_flash %}
+  <span hidden data-toast="{{ llm_flash }}"
+        data-toast-type="{% if llm_flash_ok %}ok{% else %}err{% endif %}"></span>
+  {% endif %}
+</div>

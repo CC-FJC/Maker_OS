@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -49,6 +50,29 @@ async def current_user(request: Request, conn: ConnDep):
 UserDep = Annotated[sqlite3.Row | None, Depends(current_user)]
 
 
+DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+           "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def ahora_es() -> tuple[str, str]:
+    """(texto legible en español, ISO) de la hora actual del servidor."""
+    parts = ahora_partes()
+    return f"{parts['date_full']} · {parts['time']}", parts["iso"]
+
+
+def ahora_partes() -> dict[str, str]:
+    """Hora del servidor desglosada: hora (grande) + fecha (secundaria)."""
+    now = datetime.now()
+    fecha = f"{DIAS_ES[now.weekday()]} {now.day} de {MESES_ES[now.month - 1]}"
+    return {
+        "time": now.strftime("%H:%M"),
+        "date": fecha,
+        "date_full": f"{fecha} de {now.year}",
+        "iso": now.strftime("%Y-%m-%d %H:%M"),
+    }
+
+
 def base_ctx(
     request: Request, conn: sqlite3.Connection, user: sqlite3.Row | None, **extra: Any
 ) -> dict[str, Any]:
@@ -60,6 +84,7 @@ def base_ctx(
     items = nav_items(conn, user)
     for item in items:
         item["count"] = counts.get(item["id"], 0) if item["id"] in COLLECTIONS else 0
+    reloj = ahora_partes()
     ctx: dict[str, Any] = {
         "user": user,
         "counts": counts,
@@ -85,6 +110,11 @@ def base_ctx(
         ],
         # ?panel=1 renders a page without the sidebar (used by /dividir panes).
         "panel": request.query_params.get("panel") == "1",
+        # Server clock: hora en primer plano, fecha como dato secundario.
+        "now_time": reloj["time"],
+        "now_date": reloj["date"],
+        "now_es": f"{reloj['date_full']} · {reloj['time']}",
+        "now_iso": reloj["iso"],
     }
     ctx.update(extra)
     return ctx

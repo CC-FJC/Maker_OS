@@ -1,0 +1,15 @@
+<span data-modal-title hidden>Servidor LLM (LM Studio)</span>
+<form class="modal-form" hx-post="/asistente/conexion" hx-target="#makeros-modal-body"
+      hx-swap="innerHTML">
+  <label>Dirección del servidor
+    <input name="base_url" value="{{ llm_base_url }}" spellcheck="false"
+           placeholder="http://localhost:1234/v1" aria-label="Dirección del servidor LLM">
+  </label>
+  <p class="admin-muted">Se acepta con o sin <code>/v1</code> al final (LM Studio usa
+    <code>http://localhost:1234/v1</code>, Ollama <code>http://localhost:11434/v1</code>).
+    Déjalo vacío para desactivar el asistente. Al guardar se refresca la barra de conexión.</p>
+  <div class="modal-actions">
+    <button class="btn-primary" type="submit">Guardar</button>
+    <button class="btn-ghost" type="button" onclick="makerosCloseModal()">Cancelar</button>
+  </div>
+</form>
